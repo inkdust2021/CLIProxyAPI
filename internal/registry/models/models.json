@@ -1371,6 +1371,51 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-5.4",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4",
+      "version": "gpt-5.4",
+      "description": "Stable version of GPT 5.4",
+      "context_length": 1050000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4 Mini",
+      "version": "gpt-5.4",
+      "description": "Faster and lower-cost version of GPT 5.4.",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
     }
   ],
   "codex-team": [
@@ -1621,6 +1666,28 @@
           "medium",
           "high",
           "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4 Mini",
+      "version": "gpt-5.4",
+      "description": "Faster and lower-cost version of GPT 5.4.",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high"
         ]
       }
     }
@@ -1898,6 +1965,28 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4 Mini",
+      "version": "gpt-5.4",
+      "description": "Faster and lower-cost version of GPT 5.4.",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
     }
   ],
   "codex-pro": [
@@ -2171,6 +2260,28 @@
           "medium",
           "high",
           "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "object": "model",
+      "created": 1772668800,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.4 Mini",
+      "version": "gpt-5.4",
+      "description": "Faster and lower-cost version of GPT 5.4.",
+      "context_length": 400000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high"
         ]
       }
     }
