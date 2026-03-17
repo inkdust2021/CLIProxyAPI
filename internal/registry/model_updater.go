@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	modelsFetchTimeout    = 30 * time.Second
-	modelsRefreshInterval = 3 * time.Hour
+	modelsFetchTimeout      = 30 * time.Second
+	modelsRefreshInterval   = 3 * time.Hour
+	modelsRefreshEnabledEnv = "MODELS_REFRESH_ENABLED"
 )
 
 var modelsURLs = []string{
@@ -75,9 +77,23 @@ func init() {
 // immediately on startup and then refreshes the model catalog every 3 hours.
 // Safe to call multiple times; only one updater will run.
 func StartModelsUpdater(ctx context.Context) {
+	if !modelsRefreshEnabled() {
+		log.Infof("remote model refresh disabled, using embedded models catalog (set %s=true to enable)", modelsRefreshEnabledEnv)
+		return
+	}
 	updaterOnce.Do(func() {
 		go runModelsUpdater(ctx)
 	})
+}
+
+func modelsRefreshEnabled() bool {
+	value := strings.TrimSpace(os.Getenv(modelsRefreshEnabledEnv))
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func runModelsUpdater(ctx context.Context) {
