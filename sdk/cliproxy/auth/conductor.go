@@ -69,6 +69,14 @@ const (
 
 var quotaCooldownDisabled atomic.Bool
 
+const fatalCodexResponseCompletedDisconnectMessage = "stream error: stream disconnected before completion: stream closed before response.completed"
+
+var fatalAuthDeletionKeywords = []string{
+	fatalCodexResponseCompletedDisconnectMessage,
+	"usage_limit_reached",
+	"stream disconnect",
+}
+
 // SetQuotaCooldownDisabled toggles quota cooldown scheduling globally.
 func SetQuotaCooldownDisabled(disable bool) {
 	quotaCooldownDisabled.Store(disable)
@@ -1585,6 +1593,19 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
 		return
 	}
+	if shouldDeleteAuthAfterResult(result) {
+		deleteCtx := ctx
+		if deleteCtx == nil || deleteCtx.Err() != nil {
+			deleteCtx = context.Background()
+		}
+		if err := m.Delete(deleteCtx, result.AuthID); err != nil {
+			log.Errorf("failed to delete auth %s after fatal stream error: %v", result.AuthID, err)
+		} else {
+			log.Warnf("deleted auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+		}
+		m.hook.OnResult(ctx, result)
+		return
+	}
 
 	shouldResumeModel := false
 	shouldSuspendModel := false
@@ -1705,6 +1726,22 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	}
 
 	m.hook.OnResult(ctx, result)
+}
+
+func shouldDeleteAuthAfterResult(result Result) bool {
+	if result.Success || result.Error == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(result.Error.Message))
+	if message == "" {
+		return false
+	}
+	for _, keyword := range fatalAuthDeletionKeywords {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureModelState(auth *Auth, model string) *ModelState {
@@ -1998,6 +2035,83 @@ func (m *Manager) GetByID(id string) (*Auth, bool) {
 		return nil, false
 	}
 	return auth.Clone(), true
+}
+
+// Delete removes an auth from memory, scheduler, model registry, and persistence store.
+func (m *Manager) Delete(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if m == nil || id == "" {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var authSnapshot *Auth
+	m.mu.Lock()
+	if auth, ok := m.auths[id]; ok && auth != nil {
+		authSnapshot = auth.Clone()
+		delete(m.auths, id)
+	}
+	m.mu.Unlock()
+
+	if m.scheduler != nil {
+		m.scheduler.removeAuth(id)
+	}
+	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
+	registry.GetGlobalRegistry().UnregisterClient(id)
+
+	return m.deletePersistedAuth(ctx, id, authSnapshot)
+}
+
+func (m *Manager) deletePersistedAuth(ctx context.Context, id string, auth *Auth) error {
+	if m == nil || m.store == nil {
+		return nil
+	}
+	if shouldSkipPersist(ctx) {
+		return nil
+	}
+	if auth != nil && auth.Attributes != nil {
+		if v := strings.ToLower(strings.TrimSpace(auth.Attributes["runtime_only"])); v == "true" {
+			return nil
+		}
+	}
+
+	var lastErr error
+	for _, candidate := range authDeleteCandidates(id, auth) {
+		if err := m.store.Delete(ctx, candidate); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func authDeleteCandidates(id string, auth *Auth) []string {
+	candidates := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	appendCandidate := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		candidates = append(candidates, value)
+	}
+
+	appendCandidate(id)
+	if auth != nil {
+		appendCandidate(auth.FileName)
+		if auth.Attributes != nil {
+			appendCandidate(auth.Attributes["path"])
+			appendCandidate(auth.Attributes["source"])
+		}
+	}
+	return candidates
 }
 
 // Executor returns the registered provider executor for a provider key.
