@@ -71,6 +71,11 @@ var quotaCooldownDisabled atomic.Bool
 
 const fatalCodexResponseCompletedDisconnectMessage = "stream error: stream disconnected before completion: stream closed before response.completed"
 
+const (
+	fatalAuthActionDelete  = "delete"
+	fatalAuthActionDisable = "disable"
+)
+
 var fatalAuthDeletionKeywords = []string{
 	fatalCodexResponseCompletedDisconnectMessage,
 	"usage_limit_reached",
@@ -1594,14 +1599,23 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		return
 	}
 	if shouldDeleteAuthAfterResult(result) {
-		deleteCtx := ctx
-		if deleteCtx == nil || deleteCtx.Err() != nil {
-			deleteCtx = context.Background()
+		actionCtx := ctx
+		if actionCtx == nil || actionCtx.Err() != nil {
+			actionCtx = context.Background()
 		}
-		if err := m.Delete(deleteCtx, result.AuthID); err != nil {
-			log.Errorf("failed to delete auth %s after fatal stream error: %v", result.AuthID, err)
-		} else {
-			log.Warnf("deleted auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+		switch m.fatalAuthAction() {
+		case fatalAuthActionDisable:
+			if err := m.Disable(actionCtx, result.AuthID, result.Error); err != nil {
+				log.Errorf("failed to disable auth %s after fatal stream error: %v", result.AuthID, err)
+			} else {
+				log.Warnf("disabled auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+			}
+		default:
+			if err := m.Delete(actionCtx, result.AuthID); err != nil {
+				log.Errorf("failed to delete auth %s after fatal stream error: %v", result.AuthID, err)
+			} else {
+				log.Warnf("deleted auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+			}
 		}
 		m.hook.OnResult(ctx, result)
 		return
@@ -1742,6 +1756,26 @@ func shouldDeleteAuthAfterResult(result Result) bool {
 		}
 	}
 	return false
+}
+
+func normalizeFatalAuthAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case fatalAuthActionDelete:
+		return fatalAuthActionDelete
+	default:
+		return fatalAuthActionDisable
+	}
+}
+
+func (m *Manager) fatalAuthAction() string {
+	if m == nil {
+		return fatalAuthActionDisable
+	}
+	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
+	if cfg == nil {
+		return fatalAuthActionDisable
+	}
+	return normalizeFatalAuthAction(cfg.FatalAuthAction)
 }
 
 func ensureModelState(auth *Auth, model string) *ModelState {
@@ -2035,6 +2069,54 @@ func (m *Manager) GetByID(id string) (*Auth, bool) {
 		return nil, false
 	}
 	return auth.Clone(), true
+}
+
+// Disable 会将账号标记为禁用、从运行时路由摘除，并持久化禁用状态。
+func (m *Manager) Disable(ctx context.Context, id string, reason *Error) error {
+	id = strings.TrimSpace(id)
+	if m == nil || id == "" {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var authSnapshot *Auth
+	m.mu.Lock()
+	if auth, ok := m.auths[id]; ok && auth != nil {
+		now := time.Now()
+		auth.Disabled = true
+		auth.Unavailable = false
+		auth.Status = StatusDisabled
+		auth.NextRetryAfter = time.Time{}
+		auth.UpdatedAt = now
+		auth.Quota = QuotaState{}
+		if reason != nil {
+			auth.LastError = cloneError(reason)
+			auth.StatusMessage = strings.TrimSpace(reason.Message)
+		} else {
+			auth.LastError = nil
+		}
+		if strings.TrimSpace(auth.StatusMessage) == "" {
+			auth.StatusMessage = "disabled by fatal auth policy"
+		}
+		authSnapshot = auth.Clone()
+	}
+	m.mu.Unlock()
+	if authSnapshot == nil {
+		return nil
+	}
+
+	if m.scheduler != nil {
+		m.scheduler.upsertAuth(authSnapshot)
+	}
+	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
+	registry.GetGlobalRegistry().UnregisterClient(id)
+	if err := m.persist(ctx, authSnapshot); err != nil {
+		return err
+	}
+	m.hook.OnAuthUpdated(ctx, authSnapshot.Clone())
+	return nil
 }
 
 // Delete removes an auth from memory, scheduler, model registry, and persistence store.

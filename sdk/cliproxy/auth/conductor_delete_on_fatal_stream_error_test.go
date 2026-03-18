@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 )
 
@@ -57,7 +58,7 @@ func registerDeleteTestAuth(t *testing.T, manager *Manager, authID string) *Auth
 	return auth
 }
 
-func TestManager_MarkResult_DeletesAuthOnFatalKeywords(t *testing.T) {
+func TestManager_MarkResult_DeletesAuthOnFatalKeywordsWhenConfigured(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
@@ -72,6 +73,7 @@ func TestManager_MarkResult_DeletesAuthOnFatalKeywords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &deletingStore{}
 			manager := NewManager(store, nil, nil)
+			manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthAction: fatalAuthActionDelete}})
 			auth := registerDeleteTestAuth(t, manager, tc.name+".json")
 			reg := registry.GetGlobalRegistry()
 
@@ -127,5 +129,82 @@ func TestManager_MarkResult_DoesNotDeleteAuthOnOtherErrors(t *testing.T) {
 	}
 	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
 		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+}
+
+func TestManager_MarkResult_DisablesAuthOnFatalKeywordsWhenConfigured(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthAction: fatalAuthActionDisable}})
+	auth := registerDeleteTestAuth(t, manager, "auth-disable.json")
+	reg := registry.GetGlobalRegistry()
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "provider error: usage_limit_reached",
+			HTTPStatus: 429,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain disabled", auth.ID)
+	}
+	if !updated.Disabled {
+		t.Fatalf("expected auth %s to be disabled", auth.ID)
+	}
+	if updated.Status != StatusDisabled {
+		t.Fatalf("expected status %s, got %s", StatusDisabled, updated.Status)
+	}
+	if updated.StatusMessage != "provider error: usage_limit_reached" {
+		t.Fatalf("unexpected status message: %q", updated.StatusMessage)
+	}
+	if reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
+		t.Fatalf("expected registry entry for %s to be removed", auth.ID)
+	}
+	if got := store.saveCount.Load(); got != 2 {
+		t.Fatalf("expected register + disable persistence, got %d saves", got)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+}
+
+func TestManager_MarkResult_DefaultsToDisableOnFatalKeywords(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	auth := registerDeleteTestAuth(t, manager, "auth-default-disable.json")
+	reg := registry.GetGlobalRegistry()
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "provider error: usage_limit_reached",
+			HTTPStatus: 429,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain disabled", auth.ID)
+	}
+	if !updated.Disabled {
+		t.Fatalf("expected auth %s to be disabled by default", auth.ID)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+	if got := store.saveCount.Load(); got != 2 {
+		t.Fatalf("expected register + disable persistence, got %d saves", got)
+	}
+	if reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
+		t.Fatalf("expected registry entry for %s to be removed", auth.ID)
 	}
 }

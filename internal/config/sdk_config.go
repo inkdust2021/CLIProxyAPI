@@ -30,6 +30,10 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+
+	// FatalAuthAction 控制命中致命账号错误关键词后的处理方式。
+	// 支持值："delete" 和 "disable"（默认）。
+	FatalAuthAction string `yaml:"fatal-auth-action,omitempty" json:"fatal-auth-action,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

@@ -28,7 +28,9 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		c.JSON(200, gin.H{})
 		return
 	}
-	c.JSON(200, new(*h.cfg))
+	cfg := *h.cfg
+	cfg.FatalAuthAction = normalizeFatalAuthAction(cfg.FatalAuthAction)
+	c.JSON(200, cfg)
 }
 
 type releaseInfo struct {
@@ -277,6 +279,23 @@ func (h *Handler) GetForceModelPrefix(c *gin.Context) {
 }
 func (h *Handler) PutForceModelPrefix(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.ForceModelPrefix = v })
+}
+
+func normalizeFatalAuthAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "delete":
+		return "delete"
+	default:
+		return "disable"
+	}
+}
+
+// FatalAuthAction
+func (h *Handler) GetFatalAuthAction(c *gin.Context) {
+	c.JSON(200, gin.H{"fatal-auth-action": normalizeFatalAuthAction(h.cfg.FatalAuthAction)})
+}
+func (h *Handler) PutFatalAuthAction(c *gin.Context) {
+	h.updateStringField(c, func(v string) { h.cfg.FatalAuthAction = normalizeFatalAuthAction(v) })
 }
 
 func normalizeRoutingStrategy(strategy string) (string, bool) {
