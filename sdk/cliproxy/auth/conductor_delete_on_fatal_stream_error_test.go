@@ -58,14 +58,15 @@ func registerDeleteTestAuth(t *testing.T, manager *Manager, authID string) *Auth
 	return auth
 }
 
-func TestManager_MarkResult_DeletesAuthOnFatalKeywordsWhenConfigured(t *testing.T) {
+func TestManager_MarkResult_DeletesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
+		status  int
 	}{
-		{name: "exact_disconnect_error", message: fatalCodexResponseCompletedDisconnectMessage},
-		{name: "usage_limit_reached", message: "provider error: usage_limit_reached"},
-		{name: "stream_disconnect_keyword", message: "upstream stream disconnect during completion"},
+		{name: "timeout", message: "stream error: upstream timeout", status: 408},
+		{name: "quota", message: "provider error: usage_limit_reached", status: 429},
+		{name: "bad_request", message: "provider error: invalid request", status: 400},
 	}
 
 	for _, tc := range tests {
@@ -84,7 +85,7 @@ func TestManager_MarkResult_DeletesAuthOnFatalKeywordsWhenConfigured(t *testing.
 				Success:  false,
 				Error: &Error{
 					Message:    tc.message,
-					HTTPStatus: 408,
+					HTTPStatus: tc.status,
 				},
 			})
 
@@ -105,34 +106,7 @@ func TestManager_MarkResult_DeletesAuthOnFatalKeywordsWhenConfigured(t *testing.
 	}
 }
 
-func TestManager_MarkResult_DoesNotDeleteAuthOnOtherErrors(t *testing.T) {
-	store := &deletingStore{}
-	manager := NewManager(store, nil, nil)
-	auth := registerDeleteTestAuth(t, manager, "auth-non-fatal.json")
-
-	manager.MarkResult(context.Background(), Result{
-		AuthID:   auth.ID,
-		Provider: auth.Provider,
-		Model:    "gpt-5.3-codex",
-		Success:  false,
-		Error: &Error{
-			Message:    "stream error: upstream timeout",
-			HTTPStatus: 408,
-		},
-	})
-
-	if _, ok := manager.GetByID(auth.ID); !ok {
-		t.Fatalf("expected auth %s to remain", auth.ID)
-	}
-	if got := store.saveCount.Load(); got != 2 {
-		t.Fatalf("expected register + failure persistence, got %d saves", got)
-	}
-	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
-		t.Fatalf("expected no delete calls, got %v", deletedIDs)
-	}
-}
-
-func TestManager_MarkResult_DisablesAuthOnFatalKeywordsWhenConfigured(t *testing.T) {
+func TestManager_MarkResult_DisablesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 	store := &deletingStore{}
 	manager := NewManager(store, nil, nil)
 	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthAction: fatalAuthActionDisable}})
@@ -145,8 +119,8 @@ func TestManager_MarkResult_DisablesAuthOnFatalKeywordsWhenConfigured(t *testing
 		Model:    "gpt-5.3-codex",
 		Success:  false,
 		Error: &Error{
-			Message:    "provider error: usage_limit_reached",
-			HTTPStatus: 429,
+			Message:    "stream error: upstream timeout",
+			HTTPStatus: 408,
 		},
 	})
 
@@ -160,7 +134,7 @@ func TestManager_MarkResult_DisablesAuthOnFatalKeywordsWhenConfigured(t *testing
 	if updated.Status != StatusDisabled {
 		t.Fatalf("expected status %s, got %s", StatusDisabled, updated.Status)
 	}
-	if updated.StatusMessage != "provider error: usage_limit_reached" {
+	if updated.StatusMessage != "stream error: upstream timeout" {
 		t.Fatalf("unexpected status message: %q", updated.StatusMessage)
 	}
 	if reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
@@ -174,7 +148,7 @@ func TestManager_MarkResult_DisablesAuthOnFatalKeywordsWhenConfigured(t *testing
 	}
 }
 
-func TestManager_MarkResult_DefaultsToDisableOnFatalKeywords(t *testing.T) {
+func TestManager_MarkResult_DefaultsToDisableOnAnyError(t *testing.T) {
 	store := &deletingStore{}
 	manager := NewManager(store, nil, nil)
 	auth := registerDeleteTestAuth(t, manager, "auth-default-disable.json")
@@ -186,8 +160,8 @@ func TestManager_MarkResult_DefaultsToDisableOnFatalKeywords(t *testing.T) {
 		Model:    "gpt-5.3-codex",
 		Success:  false,
 		Error: &Error{
-			Message:    "provider error: usage_limit_reached",
-			HTTPStatus: 429,
+			Message:    "provider error: invalid request",
+			HTTPStatus: 400,
 		},
 	})
 
@@ -197,6 +171,12 @@ func TestManager_MarkResult_DefaultsToDisableOnFatalKeywords(t *testing.T) {
 	}
 	if !updated.Disabled {
 		t.Fatalf("expected auth %s to be disabled by default", auth.ID)
+	}
+	if updated.Status != StatusDisabled {
+		t.Fatalf("expected status %s, got %s", StatusDisabled, updated.Status)
+	}
+	if updated.StatusMessage != "provider error: invalid request" {
+		t.Fatalf("unexpected status message: %q", updated.StatusMessage)
 	}
 	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
 		t.Fatalf("expected no delete calls, got %v", deletedIDs)

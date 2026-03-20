@@ -1598,7 +1598,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
 		return
 	}
-	if shouldDeleteAuthAfterResult(result) {
+	if shouldApplyFatalAuthActionAfterResult(result) {
 		actionCtx := ctx
 		if actionCtx == nil || actionCtx.Err() != nil {
 			actionCtx = context.Background()
@@ -1606,15 +1606,15 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		switch m.fatalAuthAction() {
 		case fatalAuthActionDisable:
 			if err := m.Disable(actionCtx, result.AuthID, result.Error); err != nil {
-				log.Errorf("failed to disable auth %s after fatal stream error: %v", result.AuthID, err)
+				log.Errorf("failed to disable auth %s after auth error: %v", result.AuthID, err)
 			} else {
-				log.Warnf("disabled auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+				log.Warnf("disabled auth %s after auth error: %s", result.AuthID, result.Error.Message)
 			}
 		default:
 			if err := m.Delete(actionCtx, result.AuthID); err != nil {
-				log.Errorf("failed to delete auth %s after fatal stream error: %v", result.AuthID, err)
+				log.Errorf("failed to delete auth %s after auth error: %v", result.AuthID, err)
 			} else {
-				log.Warnf("deleted auth %s after fatal stream error: %s", result.AuthID, result.Error.Message)
+				log.Warnf("deleted auth %s after auth error: %s", result.AuthID, result.Error.Message)
 			}
 		}
 		m.hook.OnResult(ctx, result)
@@ -1742,20 +1742,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	m.hook.OnResult(ctx, result)
 }
 
-func shouldDeleteAuthAfterResult(result Result) bool {
-	if result.Success || result.Error == nil {
-		return false
-	}
-	message := strings.ToLower(strings.TrimSpace(result.Error.Message))
-	if message == "" {
-		return false
-	}
-	for _, keyword := range fatalAuthDeletionKeywords {
-		if strings.Contains(message, keyword) {
-			return true
-		}
-	}
-	return false
+func shouldApplyFatalAuthActionAfterResult(result Result) bool {
+	return !result.Success && result.Error != nil
 }
 
 func normalizeFatalAuthAction(action string) string {
