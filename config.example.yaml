@@ -83,7 +83,13 @@ max-retry-credentials: 0
 # Maximum wait time in seconds for a cooled-down credential before triggering a retry.
 max-retry-interval: 30
 
-# How to handle any credential error observed at runtime.
+# How to handle auth errors at runtime.
+# false = 关闭该功能
+# true  = 任意报错都按 fatal-auth-action 处理
+# auto  = usage_limit_reached 自动禁用，401/401 Unauthorized 自动删除，其他错误忽略
+fatal-auth-enabled: auto
+
+# How to handle any credential error observed at runtime when fatal-auth-enabled is true.
 # delete  = remove the credential from storage (适合 free 号池)
 # disable = keep the credential but mark it disabled (默认值，适合付费/共享号池)
 fatal-auth-action: disable

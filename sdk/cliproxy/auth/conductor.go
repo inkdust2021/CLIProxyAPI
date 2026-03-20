@@ -77,9 +77,7 @@ const (
 )
 
 var fatalAuthDeletionKeywords = []string{
-	fatalCodexResponseCompletedDisconnectMessage,
 	"usage_limit_reached",
-	"stream disconnect",
 }
 
 // SetQuotaCooldownDisabled toggles quota cooldown scheduling globally.
@@ -1598,12 +1596,13 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
 		return
 	}
-	if shouldApplyFatalAuthActionAfterResult(result) {
+	decision := m.fatalAuthDecisionAfterResult(result)
+	if decision.action != "" {
 		actionCtx := ctx
 		if actionCtx == nil || actionCtx.Err() != nil {
 			actionCtx = context.Background()
 		}
-		switch m.fatalAuthAction() {
+		switch decision.action {
 		case fatalAuthActionDisable:
 			if err := m.Disable(actionCtx, result.AuthID, result.Error); err != nil {
 				log.Errorf("failed to disable auth %s after auth error: %v", result.AuthID, err)
@@ -1617,6 +1616,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 				log.Warnf("deleted auth %s after auth error: %s", result.AuthID, result.Error.Message)
 			}
 		}
+		m.hook.OnResult(ctx, result)
+		return
+	}
+	if decision.ignore {
 		m.hook.OnResult(ctx, result)
 		return
 	}
@@ -1742,8 +1745,73 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	m.hook.OnResult(ctx, result)
 }
 
-func shouldApplyFatalAuthActionAfterResult(result Result) bool {
-	return !result.Success && result.Error != nil
+type fatalAuthDecision struct {
+	action string
+	ignore bool
+}
+
+func (m *Manager) fatalAuthDecisionAfterResult(result Result) fatalAuthDecision {
+	if result.Success || result.Error == nil {
+		return fatalAuthDecision{}
+	}
+	switch m.fatalAuthMode() {
+	case internalconfig.FatalAuthModeTrue:
+		return fatalAuthDecision{action: m.fatalAuthAction()}
+	case internalconfig.FatalAuthModeAuto:
+		return autoFatalAuthDecision(result)
+	default:
+		return fatalAuthDecision{}
+	}
+}
+
+func autoFatalAuthDecision(result Result) fatalAuthDecision {
+	if shouldAutoDeleteAuthAfterResult(result) {
+		return fatalAuthDecision{action: fatalAuthActionDelete}
+	}
+	if shouldAutoDisableAuthAfterResult(result) {
+		return fatalAuthDecision{action: fatalAuthActionDisable}
+	}
+	return fatalAuthDecision{ignore: true}
+}
+
+func shouldAutoDeleteAuthAfterResult(result Result) bool {
+	if statusCodeFromResult(result.Error) == http.StatusUnauthorized {
+		return true
+	}
+	return fatalAuthErrorContains(result.Error, "401 unauthorized")
+}
+
+func shouldAutoDisableAuthAfterResult(result Result) bool {
+	return fatalAuthErrorContains(result.Error, fatalAuthDeletionKeywords...)
+}
+
+func fatalAuthErrorContains(resultErr *Error, keywords ...string) bool {
+	if resultErr == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(resultErr.Message))
+	code := strings.ToLower(strings.TrimSpace(resultErr.Code))
+	for _, keyword := range keywords {
+		keyword = strings.ToLower(strings.TrimSpace(keyword))
+		if keyword == "" {
+			continue
+		}
+		if strings.Contains(message, keyword) || strings.Contains(code, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) fatalAuthMode() internalconfig.FatalAuthMode {
+	if m == nil {
+		return internalconfig.FatalAuthModeFalse
+	}
+	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
+	if cfg == nil {
+		return internalconfig.FatalAuthModeFalse
+	}
+	return internalconfig.NormalizeFatalAuthMode(cfg.FatalAuthEnabled, cfg.FatalAuthAction)
 }
 
 func normalizeFatalAuthAction(action string) string {

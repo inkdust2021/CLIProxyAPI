@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -74,7 +75,10 @@ func TestManager_MarkResult_DeletesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &deletingStore{}
 			manager := NewManager(store, nil, nil)
-			manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthAction: fatalAuthActionDelete}})
+			manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+				FatalAuthEnabled: internalconfig.FatalAuthModeTrue,
+				FatalAuthAction:  fatalAuthActionDelete,
+			}})
 			auth := registerDeleteTestAuth(t, manager, tc.name+".json")
 			reg := registry.GetGlobalRegistry()
 
@@ -109,7 +113,10 @@ func TestManager_MarkResult_DeletesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 func TestManager_MarkResult_DisablesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 	store := &deletingStore{}
 	manager := NewManager(store, nil, nil)
-	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthAction: fatalAuthActionDisable}})
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeTrue,
+		FatalAuthAction:  fatalAuthActionDisable,
+	}})
 	auth := registerDeleteTestAuth(t, manager, "auth-disable.json")
 	reg := registry.GetGlobalRegistry()
 
@@ -148,9 +155,10 @@ func TestManager_MarkResult_DisablesAuthOnAnyErrorWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestManager_MarkResult_DefaultsToDisableOnAnyError(t *testing.T) {
+func TestManager_MarkResult_DefaultsToDisableWhenExplicitlyEnabled(t *testing.T) {
 	store := &deletingStore{}
 	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{FatalAuthEnabled: internalconfig.FatalAuthModeTrue}})
 	auth := registerDeleteTestAuth(t, manager, "auth-default-disable.json")
 	reg := registry.GetGlobalRegistry()
 
@@ -170,7 +178,7 @@ func TestManager_MarkResult_DefaultsToDisableOnAnyError(t *testing.T) {
 		t.Fatalf("expected auth %s to remain disabled", auth.ID)
 	}
 	if !updated.Disabled {
-		t.Fatalf("expected auth %s to be disabled by default", auth.ID)
+		t.Fatalf("expected auth %s to be disabled by default action", auth.ID)
 	}
 	if updated.Status != StatusDisabled {
 		t.Fatalf("expected status %s, got %s", StatusDisabled, updated.Status)
@@ -186,5 +194,186 @@ func TestManager_MarkResult_DefaultsToDisableOnAnyError(t *testing.T) {
 	}
 	if reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
 		t.Fatalf("expected registry entry for %s to be removed", auth.ID)
+	}
+}
+
+func TestManager_MarkResult_SkipsFatalAuthActionWhenDisabled(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeFalse,
+		FatalAuthAction:  fatalAuthActionDelete,
+	}})
+	auth := registerDeleteTestAuth(t, manager, "auth-fatal-disabled.json")
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "provider error: invalid request",
+			HTTPStatus: 400,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain present", auth.ID)
+	}
+	if updated.Disabled {
+		t.Fatalf("expected auth %s not to be disabled when fatal auth is off", auth.ID)
+	}
+	if updated.Status != StatusError {
+		t.Fatalf("expected status %s, got %s", StatusError, updated.Status)
+	}
+	if updated.StatusMessage != "provider error: invalid request" {
+		t.Fatalf("unexpected status message: %q", updated.StatusMessage)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+	if got := store.saveCount.Load(); got != 2 {
+		t.Fatalf("expected register + error persistence, got %d saves", got)
+	}
+}
+
+func TestManager_MarkResult_AutoDisablesAuthOnUsageLimitReached(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeAuto,
+		FatalAuthAction:  fatalAuthActionDelete,
+	}})
+	auth := registerDeleteTestAuth(t, manager, "auth-auto-disable.json")
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "provider error: usage_limit_reached",
+			HTTPStatus: http.StatusTooManyRequests,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain present", auth.ID)
+	}
+	if !updated.Disabled {
+		t.Fatalf("expected auth %s to be disabled in auto mode", auth.ID)
+	}
+	if updated.Status != StatusDisabled {
+		t.Fatalf("expected status %s, got %s", StatusDisabled, updated.Status)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+}
+
+func TestManager_MarkResult_AutoDeletesAuthOnUnauthorized(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeAuto,
+		FatalAuthAction:  fatalAuthActionDisable,
+	}})
+	auth := registerDeleteTestAuth(t, manager, "auth-auto-delete.json")
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "401 Unauthorized",
+			HTTPStatus: http.StatusUnauthorized,
+		},
+	})
+
+	if _, ok := manager.GetByID(auth.ID); ok {
+		t.Fatalf("expected auth %s to be deleted in auto mode", auth.ID)
+	}
+	deletedIDs := store.DeletedIDs()
+	if len(deletedIDs) != 1 || deletedIDs[0] != auth.ID {
+		t.Fatalf("unexpected delete calls: %v", deletedIDs)
+	}
+}
+
+func TestManager_MarkResult_AutoIgnoresOtherErrors(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeAuto,
+		FatalAuthAction:  fatalAuthActionDelete,
+	}})
+	auth := registerDeleteTestAuth(t, manager, "auth-auto-ignore.json")
+	reg := registry.GetGlobalRegistry()
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "stream error: upstream timeout",
+			HTTPStatus: http.StatusGatewayTimeout,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain present", auth.ID)
+	}
+	if updated.Disabled {
+		t.Fatalf("expected auth %s not to be disabled in auto ignore path", auth.ID)
+	}
+	if updated.Status != "" {
+		t.Fatalf("expected auth status to remain unchanged, got %q", updated.Status)
+	}
+	if updated.StatusMessage != "" {
+		t.Fatalf("expected auth status message to remain empty, got %q", updated.StatusMessage)
+	}
+	if got := store.saveCount.Load(); got != 1 {
+		t.Fatalf("expected only register persistence, got %d saves", got)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+	if !reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
+		t.Fatalf("expected registry entry for %s to stay active", auth.ID)
+	}
+}
+
+func TestManager_MarkResult_DoesNotApplyFatalAuthActionWithoutConfig(t *testing.T) {
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	auth := registerDeleteTestAuth(t, manager, "auth-no-fatal-config.json")
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message:    "provider error: invalid request",
+			HTTPStatus: 400,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain present", auth.ID)
+	}
+	if updated.Disabled {
+		t.Fatalf("expected auth %s not to be disabled without fatal auth config", auth.ID)
+	}
+	if updated.Status != StatusError {
+		t.Fatalf("expected status %s, got %s", StatusError, updated.Status)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
 	}
 }

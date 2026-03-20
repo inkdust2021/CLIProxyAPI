@@ -29,6 +29,7 @@ func (h *Handler) GetConfig(c *gin.Context) {
 		return
 	}
 	cfg := *h.cfg
+	cfg.FatalAuthEnabled = config.NormalizeFatalAuthMode(cfg.FatalAuthEnabled, cfg.FatalAuthAction)
 	cfg.FatalAuthAction = normalizeFatalAuthAction(cfg.FatalAuthAction)
 	c.JSON(200, cfg)
 }
@@ -281,6 +282,28 @@ func (h *Handler) PutForceModelPrefix(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.ForceModelPrefix = v })
 }
 
+func normalizeFatalAuthEnabled(enabled config.FatalAuthMode, action string) string {
+	return string(config.NormalizeFatalAuthMode(enabled, action))
+}
+
+func parseFatalAuthEnabledValue(value any) (config.FatalAuthMode, error) {
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return config.FatalAuthModeTrue, nil
+		}
+		return config.FatalAuthModeFalse, nil
+	case string:
+		normalized, ok := config.ParseFatalAuthMode(v)
+		if !ok {
+			return "", fmt.Errorf("invalid fatal-auth-enabled: %q", v)
+		}
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid fatal-auth-enabled")
+	}
+}
+
 func normalizeFatalAuthAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "delete":
@@ -288,6 +311,27 @@ func normalizeFatalAuthAction(action string) string {
 	default:
 		return "disable"
 	}
+}
+
+// FatalAuthEnabled
+func (h *Handler) GetFatalAuthEnabled(c *gin.Context) {
+	c.JSON(200, gin.H{"fatal-auth-enabled": normalizeFatalAuthEnabled(h.cfg.FatalAuthEnabled, h.cfg.FatalAuthAction)})
+}
+func (h *Handler) PutFatalAuthEnabled(c *gin.Context) {
+	var body struct {
+		Value any `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	normalized, err := parseFatalAuthEnabledValue(body.Value)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	h.cfg.FatalAuthEnabled = normalized
+	h.persist(c)
 }
 
 // FatalAuthAction
