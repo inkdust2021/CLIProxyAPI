@@ -321,14 +321,17 @@ func (h *BaseAPIHandler) GetAlt(c *gin.Context) string {
 //   - context.Context: The new context with cancellation and embedded values.
 //   - APIHandlerCancelFunc: A function to cancel the context and log the response.
 func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *gin.Context, ctx context.Context) (context.Context, APIHandlerCancelFunc) {
-	parentCtx := ctx
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-
 	var requestCtx context.Context
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
+	}
+
+	parentCtx := ctx
+	if requestCtx != nil {
+		parentCtx = mergeExecutionContextValues(requestCtx, ctx)
+	}
+	if parentCtx == nil {
+		parentCtx = context.Background()
 	}
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {
@@ -339,10 +342,10 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		}
 	}
 	newCtx, cancel := context.WithCancel(parentCtx)
-	if requestCtx != nil && requestCtx != parentCtx {
+	if requestCtx != nil && ctx != nil && ctx != requestCtx {
 		go func() {
 			select {
-			case <-requestCtx.Done():
+			case <-ctx.Done():
 				cancel()
 			case <-newCtx.Done():
 			}
@@ -389,6 +392,28 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 
 		cancel()
 	}
+}
+
+func mergeExecutionContextValues(base, overlay context.Context) context.Context {
+	if base == nil {
+		base = context.Background()
+	}
+	if overlay == nil || overlay == base {
+		return base
+	}
+	if requestID := logging.GetRequestID(overlay); requestID != "" && logging.GetRequestID(base) == "" {
+		base = logging.WithRequestID(base, requestID)
+	}
+	if pinnedAuthID := pinnedAuthIDFromContext(overlay); pinnedAuthID != "" {
+		base = WithPinnedAuthID(base, pinnedAuthID)
+	}
+	if selectedCallback := selectedAuthIDCallbackFromContext(overlay); selectedCallback != nil {
+		base = WithSelectedAuthIDCallback(base, selectedCallback)
+	}
+	if executionSessionID := executionSessionIDFromContext(overlay); executionSessionID != "" {
+		base = WithExecutionSessionID(base, executionSessionID)
+	}
+	return base
 }
 
 // StartNonStreamingKeepAlive emits blank lines every 5 seconds while waiting for a non-streaming response.

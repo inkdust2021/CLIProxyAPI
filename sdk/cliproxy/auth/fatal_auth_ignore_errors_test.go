@@ -25,6 +25,20 @@ func TestCompileFatalAuthIgnorePattern(t *testing.T) {
 	}
 }
 
+func TestCompileFatalAuthIgnorePattern_ExactMessage(t *testing.T) {
+	pattern, err := compileFatalAuthIgnorePattern("connection reset by peer")
+	if err != nil {
+		t.Fatalf("compile fatal auth ignore pattern: %v", err)
+	}
+
+	if !pattern.MatchString("connection reset by peer") {
+		t.Fatal("expected exact ignore pattern to match")
+	}
+	if pattern.MatchString("broken pipe") {
+		t.Fatal("expected exact ignore pattern not to match unrelated message")
+	}
+}
+
 func TestFetchFatalAuthIgnorePatterns(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "# 注释")

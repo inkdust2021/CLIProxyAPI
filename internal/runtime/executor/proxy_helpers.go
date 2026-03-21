@@ -70,6 +70,10 @@ func resolveEffectiveProxyURL(ctx context.Context, raw, source string) (string, 
 	if strings.TrimSpace(raw) == "" {
 		return "", false
 	}
+	if proxyURLContainsTemplate(raw) && cliproxyauth.GetRequestInfo(ctx) == nil {
+		log.Debugf("skip %s dynamic proxy-url without request context", source)
+		return "", false
+	}
 	resolved, err := resolveDynamicProxyURL(ctx, raw)
 	if err != nil {
 		log.Errorf("failed to resolve %s proxy-url: %v", source, err)

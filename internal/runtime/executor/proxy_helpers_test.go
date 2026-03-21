@@ -88,3 +88,19 @@ func TestNewProxyAwareHTTPClient_UsesDynamicAuthProxyURL(t *testing.T) {
 		t.Fatalf("expected dynamic proxy username, got %v", proxyURL.User)
 	}
 }
+
+func TestResolveEffectiveProxyURL_SkipsDynamicGlobalProxyWithoutRequestContext(t *testing.T) {
+	t.Parallel()
+
+	resolved, ok := resolveEffectiveProxyURL(
+		context.Background(),
+		"http://team.{client_api_key_hash}:token@proxy.example.com:2260",
+		"global",
+	)
+	if ok {
+		t.Fatalf("expected dynamic proxy without request context to be skipped, got %q", resolved)
+	}
+	if resolved != "" {
+		t.Fatalf("resolved = %q, want empty", resolved)
+	}
+}
