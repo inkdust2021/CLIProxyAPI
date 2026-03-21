@@ -153,7 +153,7 @@ type SDKConfig struct {
 	// FatalAuthEnabled 控制账号出错后的自动禁用/删除模式。
 	// 支持值：true、false、auto。
 	// 未显式配置时，会跟随 fatal-auth-action 是否已配置。
-	// auto 模式下：usage_limit_reached 自动禁用，401 自动删除，其他错误忽略。
+	// auto 模式下：usage_limit_reached 自动禁用，401 自动删除，其他错误仍走原有失败处理。
 	FatalAuthEnabled FatalAuthMode `yaml:"fatal-auth-enabled,omitempty" json:"fatal-auth-enabled,omitempty"`
 
 	// FatalAuthAction 控制账号出现任意错误后的处理方式。

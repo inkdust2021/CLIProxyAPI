@@ -86,7 +86,7 @@ max-retry-interval: 30
 # How to handle auth errors at runtime.
 # false = 关闭该功能
 # true  = 任意报错都按 fatal-auth-action 处理
-# auto  = usage_limit_reached 自动禁用，401/401 Unauthorized 自动删除，其他错误忽略
+# auto  = usage_limit_reached 自动禁用，401/401 Unauthorized 自动删除，其他错误仍走原有冷却/错误处理
 fatal-auth-enabled: auto
 
 # How to handle any credential error observed at runtime when fatal-auth-enabled is true.

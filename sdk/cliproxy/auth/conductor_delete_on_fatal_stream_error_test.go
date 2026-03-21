@@ -302,7 +302,7 @@ func TestManager_MarkResult_AutoDeletesAuthOnUnauthorized(t *testing.T) {
 	}
 }
 
-func TestManager_MarkResult_AutoIgnoresOtherErrors(t *testing.T) {
+func TestManager_MarkResult_AutoKeepsNormalFailureHandlingForOtherErrors(t *testing.T) {
 	store := &deletingStore{}
 	manager := NewManager(store, nil, nil)
 	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
@@ -328,22 +328,32 @@ func TestManager_MarkResult_AutoIgnoresOtherErrors(t *testing.T) {
 		t.Fatalf("expected auth %s to remain present", auth.ID)
 	}
 	if updated.Disabled {
-		t.Fatalf("expected auth %s not to be disabled in auto ignore path", auth.ID)
+		t.Fatalf("expected auth %s not to be disabled in auto normal failure path", auth.ID)
 	}
-	if updated.Status != "" {
-		t.Fatalf("expected auth status to remain unchanged, got %q", updated.Status)
+	if updated.Status != StatusError {
+		t.Fatalf("expected status %s, got %s", StatusError, updated.Status)
 	}
-	if updated.StatusMessage != "" {
-		t.Fatalf("expected auth status message to remain empty, got %q", updated.StatusMessage)
+	if updated.StatusMessage != "stream error: upstream timeout" {
+		t.Fatalf("unexpected status message: %q", updated.StatusMessage)
 	}
-	if got := store.saveCount.Load(); got != 1 {
-		t.Fatalf("expected only register persistence, got %d saves", got)
+	state := updated.ModelStates["gpt-5.3-codex"]
+	if state == nil {
+		t.Fatalf("expected model state to be recorded")
+	}
+	if !state.Unavailable {
+		t.Fatalf("expected model state to be marked unavailable")
+	}
+	if state.NextRetryAfter.IsZero() {
+		t.Fatalf("expected model state cooldown to be set")
+	}
+	if got := store.saveCount.Load(); got != 2 {
+		t.Fatalf("expected register + error persistence, got %d saves", got)
 	}
 	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
 		t.Fatalf("expected no delete calls, got %v", deletedIDs)
 	}
 	if !reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
-		t.Fatalf("expected registry entry for %s to stay active", auth.ID)
+		t.Fatalf("expected registry entry for %s to remain registered while manager cooldown applies", auth.ID)
 	}
 }
 

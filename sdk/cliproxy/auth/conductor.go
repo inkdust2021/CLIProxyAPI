@@ -1619,10 +1619,6 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		m.hook.OnResult(ctx, result)
 		return
 	}
-	if decision.ignore {
-		m.hook.OnResult(ctx, result)
-		return
-	}
 
 	shouldResumeModel := false
 	shouldSuspendModel := false
@@ -1747,7 +1743,6 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 
 type fatalAuthDecision struct {
 	action string
-	ignore bool
 }
 
 func (m *Manager) fatalAuthDecisionAfterResult(result Result) fatalAuthDecision {
@@ -1771,7 +1766,7 @@ func autoFatalAuthDecision(result Result) fatalAuthDecision {
 	if shouldAutoDisableAuthAfterResult(result) {
 		return fatalAuthDecision{action: fatalAuthActionDisable}
 	}
-	return fatalAuthDecision{ignore: true}
+	return fatalAuthDecision{}
 }
 
 func shouldAutoDeleteAuthAfterResult(result Result) bool {
