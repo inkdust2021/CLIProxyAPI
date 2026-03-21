@@ -46,7 +46,7 @@ func resolveDynamicProxyURL(ctx context.Context, raw string) (string, error) {
 			unresolved = append(unresolved, match)
 			return match
 		}
-		return url.PathEscape(value)
+		return escapeDynamicProxyTemplateValue(value)
 	})
 	if len(unresolved) > 0 {
 		return "", fmt.Errorf("unresolved proxy-url placeholders: %s", strings.Join(unresolved, ", "))
@@ -110,4 +110,11 @@ func resolveDynamicProxyTemplateValue(info *cliproxyauth.RequestInfo, key, arg s
 func stableProxyHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func escapeDynamicProxyTemplateValue(value string) string {
+	// 动态占位符常用于代理 URL 的 userinfo（用户名/密码）。
+	// QueryEscape 会对 ':'、'@' 等分隔符进行转义，避免破坏 userinfo 结构。
+	escaped := url.QueryEscape(value)
+	return strings.ReplaceAll(escaped, "+", "%20")
 }

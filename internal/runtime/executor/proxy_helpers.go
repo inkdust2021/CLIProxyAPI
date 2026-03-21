@@ -13,9 +13,10 @@ import (
 )
 
 // newProxyAwareHTTPClient creates an HTTP client with proper proxy configuration priority:
-// 1. Use auth.ProxyURL if configured (highest priority)
-// 2. Use cfg.ProxyURL if auth proxy is not configured
-// 3. Use RoundTripper from context if neither are configured
+// 1. When Resin proxy is enabled, use cfg.ResinProxyURL only.
+// 2. Otherwise use auth.ProxyURL if configured.
+// 3. Then use cfg.ProxyURL if auth proxy is not configured.
+// 4. Use RoundTripper from context if no explicit proxy URL is configured.
 //
 // Parameters:
 //   - ctx: The context containing optional RoundTripper
@@ -53,6 +54,12 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 }
 
 func effectiveProxyURL(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth) string {
+	if cfg != nil && cfg.ResinProxyEnabled {
+		if proxyURL, ok := resolveEffectiveProxyURL(ctx, strings.TrimSpace(cfg.ResinProxyURL), "resin"); ok {
+			return proxyURL
+		}
+		return ""
+	}
 	if auth != nil {
 		if proxyURL, ok := resolveEffectiveProxyURL(ctx, strings.TrimSpace(auth.ProxyURL), "auth"); ok {
 			return proxyURL

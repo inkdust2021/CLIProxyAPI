@@ -606,6 +606,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		cfg.Pprof.Addr = DefaultPprofAddr
 	}
 
+	cfg.ProxyURL = strings.TrimSpace(cfg.ProxyURL)
+	cfg.ResinProxyURL = strings.TrimSpace(cfg.ResinProxyURL)
+
 	if cfg.LogsMaxTotalSizeMB < 0 {
 		cfg.LogsMaxTotalSizeMB = 0
 	}

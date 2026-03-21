@@ -53,6 +53,67 @@ func TestResolveDynamicProxyURL_ClientAPIKeyHash(t *testing.T) {
 	}
 }
 
+func TestResolveDynamicProxyURL_ResinDefaultPlatformClientHash(t *testing.T) {
+	t.Parallel()
+
+	ctx := cliproxyauth.WithRequestInfo(context.Background(), &cliproxyauth.RequestInfo{
+		Principal: "client-key-123",
+	})
+	resolved, err := resolveDynamicProxyURL(ctx, "http://Default.{client_api_key_hash}:my-token@resin:2260")
+	if err != nil {
+		t.Fatalf("resolveDynamicProxyURL returned error: %v", err)
+	}
+	parsed, err := url.Parse(resolved)
+	if err != nil {
+		t.Fatalf("resolved proxy URL parse failed: %v", err)
+	}
+	if parsed.User == nil {
+		t.Fatal("expected resolved proxy URL to keep user info")
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword {
+		t.Fatal("expected resolved proxy URL to keep password")
+	}
+	if password != "my-token" {
+		t.Fatalf("password = %q, want %q", password, "my-token")
+	}
+	wantUsername := "Default." + stableProxyHash("client-key-123")
+	if got := parsed.User.Username(); got != wantUsername {
+		t.Fatalf("username = %q, want %q", got, wantUsername)
+	}
+}
+
+func TestResolveDynamicProxyURL_ResinAccountWithColon(t *testing.T) {
+	t.Parallel()
+
+	ctx := cliproxyauth.WithRequestInfo(context.Background(), &cliproxyauth.RequestInfo{
+		Headers: http.Header{
+			"X-Resin-Account": []string{"bEA:234"},
+		},
+	})
+	resolved, err := resolveDynamicProxyURL(ctx, "http://MyHub.{request_header:X-Resin-Account}:resin-123456@resin:2260")
+	if err != nil {
+		t.Fatalf("resolveDynamicProxyURL returned error: %v", err)
+	}
+	parsed, err := url.Parse(resolved)
+	if err != nil {
+		t.Fatalf("resolved proxy URL parse failed: %v", err)
+	}
+	if parsed.User == nil {
+		t.Fatal("expected resolved proxy URL to keep user info")
+	}
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword {
+		t.Fatal("expected resolved proxy URL to keep password")
+	}
+	if password != "resin-123456" {
+		t.Fatalf("password = %q, want %q", password, "resin-123456")
+	}
+	if got := parsed.User.Username(); got != "MyHub.bEA:234" {
+		t.Fatalf("username = %q, want %q", got, "MyHub.bEA:234")
+	}
+}
+
 func TestNewProxyAwareHTTPClient_UsesDynamicAuthProxyURL(t *testing.T) {
 	t.Parallel()
 
@@ -102,5 +163,54 @@ func TestResolveEffectiveProxyURL_SkipsDynamicGlobalProxyWithoutRequestContext(t
 	}
 	if resolved != "" {
 		t.Fatalf("resolved = %q, want empty", resolved)
+	}
+}
+
+func TestEffectiveProxyURL_UsesResinProxyWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	ctx := cliproxyauth.WithRequestInfo(context.Background(), &cliproxyauth.RequestInfo{
+		Principal: "client-key-123",
+	})
+	cfg := &config.Config{
+		SDKConfig: sdkconfig.SDKConfig{
+			ProxyURL:          "http://global-proxy.example.com:8080",
+			ResinProxyEnabled: true,
+			ResinProxyURL:     "http://team.{client_api_key_hash}:token@resin:2260",
+		},
+	}
+	auth := &cliproxyauth.Auth{ProxyURL: "http://auth-proxy.example.com:1080"}
+
+	resolved := effectiveProxyURL(ctx, cfg, auth)
+	if resolved == "" {
+		t.Fatal("expected resin proxy URL to be resolved")
+	}
+	parsed, err := url.Parse(resolved)
+	if err != nil {
+		t.Fatalf("parse resolved resin proxy URL: %v", err)
+	}
+	if parsed.Host != "resin:2260" {
+		t.Fatalf("unexpected host %q, want %q", parsed.Host, "resin:2260")
+	}
+	if parsed.User == nil || parsed.User.Username() == "team.{client_api_key_hash}" {
+		t.Fatalf("expected resolved resin username, got %v", parsed.User)
+	}
+}
+
+func TestEffectiveProxyURL_ResinEnabledDoesNotFallbackLegacyProxy(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		SDKConfig: sdkconfig.SDKConfig{
+			ProxyURL:          "http://global-proxy.example.com:8080",
+			ResinProxyEnabled: true,
+			ResinProxyURL:     "http://team.{client_api_key_hash}:token@resin:2260",
+		},
+	}
+	auth := &cliproxyauth.Auth{ProxyURL: "http://auth-proxy.example.com:1080"}
+
+	resolved := effectiveProxyURL(context.Background(), cfg, auth)
+	if resolved != "" {
+		t.Fatalf("expected no fallback proxy when resin is enabled without request context, got %q", resolved)
 	}
 }

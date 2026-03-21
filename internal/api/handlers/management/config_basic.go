@@ -389,3 +389,23 @@ func (h *Handler) DeleteProxyURL(c *gin.Context) {
 	h.cfg.ProxyURL = ""
 	h.persist(c)
 }
+
+// Resin proxy enabled
+func (h *Handler) GetResinProxyEnabled(c *gin.Context) {
+	c.JSON(200, gin.H{"resin-proxy-enabled": h.cfg.ResinProxyEnabled})
+}
+func (h *Handler) PutResinProxyEnabled(c *gin.Context) {
+	h.updateBoolField(c, func(v bool) { h.cfg.ResinProxyEnabled = v })
+}
+
+// Resin proxy URL
+func (h *Handler) GetResinProxyURL(c *gin.Context) {
+	c.JSON(200, gin.H{"resin-proxy-url": h.cfg.ResinProxyURL})
+}
+func (h *Handler) PutResinProxyURL(c *gin.Context) {
+	h.updateStringField(c, func(v string) { h.cfg.ResinProxyURL = v })
+}
+func (h *Handler) DeleteResinProxyURL(c *gin.Context) {
+	h.cfg.ResinProxyURL = ""
+	h.persist(c)
+}

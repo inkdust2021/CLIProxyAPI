@@ -128,6 +128,14 @@ type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
+	// ResinProxyEnabled toggles dedicated Resin proxy routing for data-plane requests.
+	// When enabled, runtime executors use ResinProxyURL only and ignore legacy proxy-url/auth proxy overrides.
+	ResinProxyEnabled bool `yaml:"resin-proxy-enabled,omitempty" json:"resin-proxy-enabled,omitempty"`
+
+	// ResinProxyURL is the dedicated Resin proxy endpoint/template used when ResinProxyEnabled is true.
+	// It supports the same dynamic placeholders as proxy-url.
+	ResinProxyURL string `yaml:"resin-proxy-url,omitempty" json:"resin-proxy-url,omitempty"`
+
 	// ForceModelPrefix requires explicit model prefixes (e.g., "teamA/gemini-3-pro-preview")
 	// to target prefixed credentials. When false, unprefixed model requests may use prefixed
 	// credentials as well.

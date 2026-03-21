@@ -521,6 +521,15 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/proxy-url", s.mgmt.PutProxyURL)
 		mgmt.DELETE("/proxy-url", s.mgmt.DeleteProxyURL)
 
+		mgmt.GET("/resin-proxy-enabled", s.mgmt.GetResinProxyEnabled)
+		mgmt.PUT("/resin-proxy-enabled", s.mgmt.PutResinProxyEnabled)
+		mgmt.PATCH("/resin-proxy-enabled", s.mgmt.PutResinProxyEnabled)
+
+		mgmt.GET("/resin-proxy-url", s.mgmt.GetResinProxyURL)
+		mgmt.PUT("/resin-proxy-url", s.mgmt.PutResinProxyURL)
+		mgmt.PATCH("/resin-proxy-url", s.mgmt.PutResinProxyURL)
+		mgmt.DELETE("/resin-proxy-url", s.mgmt.DeleteResinProxyURL)
+
 		mgmt.POST("/api-call", s.mgmt.APICall)
 
 		mgmt.GET("/quota-exceeded/switch-project", s.mgmt.GetSwitchProject)
