@@ -39,6 +39,7 @@ var (
 	Version           = "dev"
 	Commit            = "none"
 	BuildDate         = "unknown"
+	Repository        = "router-for-me/CLIProxyAPI"
 	DefaultConfigPath = ""
 )
 
@@ -48,6 +49,7 @@ func init() {
 	buildinfo.Version = Version
 	buildinfo.Commit = Commit
 	buildinfo.BuildDate = BuildDate
+	buildinfo.Repository = Repository
 }
 
 // main is the entry point of the application.

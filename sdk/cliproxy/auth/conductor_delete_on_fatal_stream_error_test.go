@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -354,6 +355,63 @@ func TestManager_MarkResult_AutoKeepsNormalFailureHandlingForOtherErrors(t *test
 	}
 	if !reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
 		t.Fatalf("expected registry entry for %s to remain registered while manager cooldown applies", auth.ID)
+	}
+}
+
+func TestManager_MarkResult_IgnoresWhitelistedErrors(t *testing.T) {
+	patterns, err := parseFatalAuthIgnorePatterns(strings.NewReader("level \"<任意值>\" not supported\n"))
+	if err != nil {
+		t.Fatalf("parse whitelist patterns: %v", err)
+	}
+	previousPatterns := loadFatalAuthIgnorePatterns()
+	storeFatalAuthIgnorePatterns(patterns)
+	t.Cleanup(func() {
+		storeFatalAuthIgnorePatterns(previousPatterns)
+	})
+
+	store := &deletingStore{}
+	manager := NewManager(store, nil, nil)
+	manager.SetConfig(&internalconfig.Config{SDKConfig: internalconfig.SDKConfig{
+		FatalAuthEnabled: internalconfig.FatalAuthModeTrue,
+		FatalAuthAction:  fatalAuthActionDelete,
+	}})
+	auth := registerDeleteTestAuth(t, manager, "auth-whitelist-ignore.json")
+	reg := registry.GetGlobalRegistry()
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-5.3-codex",
+		Success:  false,
+		Error: &Error{
+			Message: `level "verbose" not supported`,
+		},
+	})
+
+	updated, ok := manager.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth %s to remain present", auth.ID)
+	}
+	if updated.Disabled {
+		t.Fatalf("expected auth %s not to be disabled by whitelisted error", auth.ID)
+	}
+	if updated.Status != "" {
+		t.Fatalf("expected auth status to remain unchanged, got %q", updated.Status)
+	}
+	if updated.StatusMessage != "" {
+		t.Fatalf("expected auth status message to remain unchanged, got %q", updated.StatusMessage)
+	}
+	if len(updated.ModelStates) != 0 {
+		t.Fatalf("expected auth model states to remain unchanged, got %d", len(updated.ModelStates))
+	}
+	if got := store.saveCount.Load(); got != 1 {
+		t.Fatalf("expected only register persistence, got %d saves", got)
+	}
+	if deletedIDs := store.DeletedIDs(); len(deletedIDs) != 0 {
+		t.Fatalf("expected no delete calls, got %v", deletedIDs)
+	}
+	if !reg.ClientSupportsModel(auth.ID, "gpt-5.3-codex") {
+		t.Fatalf("expected registry entry for %s to remain registered", auth.ID)
 	}
 }
 

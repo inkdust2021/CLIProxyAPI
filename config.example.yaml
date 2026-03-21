@@ -94,6 +94,11 @@ fatal-auth-enabled: auto
 # disable = keep the credential but mark it disabled (默认值，适合付费/共享号池)
 fatal-auth-action: disable
 
+# Override the GitHub raw file used to fetch ignored auth errors on startup.
+# Leave empty to use the current image repository's default file:
+# sdk/cliproxy/auth/fatal-auth-ignore-errors.txt
+fatal-auth-ignore-errors-url: ""
+
 # Quota exceeded behavior
 quota-exceeded:
   switch-project: true # Whether to automatically switch to another project when a quota is exceeded

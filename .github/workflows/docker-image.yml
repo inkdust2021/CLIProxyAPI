@@ -49,6 +49,7 @@ jobs:
           echo "VERSION=${version}" >> "$GITHUB_ENV"
           echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "REPOSITORY=${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
 
       - name: Docker metadata
         id: meta
@@ -73,3 +74,4 @@ jobs:
             VERSION=${{ env.VERSION }}
             COMMIT=${{ env.COMMIT }}
             BUILD_DATE=${{ env.BUILD_DATE }}
+            REPOSITORY=${{ env.REPOSITORY }}

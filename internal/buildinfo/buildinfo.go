@@ -12,4 +12,7 @@ var (
 
 	// BuildDate records when the binary was built in UTC.
 	BuildDate = "unknown"
+
+	// Repository records the GitHub repository used to build the binary.
+	Repository = "router-for-me/CLIProxyAPI"
 )

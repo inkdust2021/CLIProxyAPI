@@ -160,6 +160,10 @@ type SDKConfig struct {
 	// 仅在 fatal-auth-enabled 为 true 时生效。
 	// 支持值："delete" 和 "disable"（默认）。
 	FatalAuthAction string `yaml:"fatal-auth-action,omitempty" json:"fatal-auth-action,omitempty"`
+
+	// FatalAuthIgnoreErrorsURL 覆盖启动时从 GitHub 拉取白名单的地址。
+	// 为空时，默认回拉当前镜像所属仓库中的 sdk/cliproxy/auth/fatal-auth-ignore-errors.txt。
+	FatalAuthIgnoreErrorsURL string `yaml:"fatal-auth-ignore-errors-url,omitempty" json:"fatal-auth-ignore-errors-url,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

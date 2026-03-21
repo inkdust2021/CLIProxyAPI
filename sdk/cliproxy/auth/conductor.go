@@ -1596,6 +1596,13 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	if result.AuthID == "" {
 		return
 	}
+	if !result.Success && shouldIgnoreAuthErrorByWhitelist(result.Error) {
+		if result.Error != nil {
+			log.Debugf("ignored whitelisted auth error for auth %s: %s", result.AuthID, result.Error.Message)
+		}
+		m.hook.OnResult(ctx, result)
+		return
+	}
 	decision := m.fatalAuthDecisionAfterResult(result)
 	if decision.action != "" {
 		actionCtx := ctx
