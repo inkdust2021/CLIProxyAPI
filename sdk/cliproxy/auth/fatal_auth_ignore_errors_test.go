@@ -39,6 +39,20 @@ func TestCompileFatalAuthIgnorePattern_ExactMessage(t *testing.T) {
 	}
 }
 
+func TestCompileFatalAuthIgnorePattern_JSONExactMessage(t *testing.T) {
+	pattern, err := compileFatalAuthIgnorePattern(`{"detail":"Unsupported parameter: metadata"}`)
+	if err != nil {
+		t.Fatalf("compile fatal auth ignore pattern: %v", err)
+	}
+
+	if !pattern.MatchString(`{"detail":"Unsupported parameter: metadata"}`) {
+		t.Fatal("expected json ignore pattern to match exact upstream error")
+	}
+	if pattern.MatchString(`{"detail":"Unsupported parameter: context_management"}`) {
+		t.Fatal("expected json ignore pattern not to match different parameter")
+	}
+}
+
 func TestFetchFatalAuthIgnorePatterns(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "# 注释")
