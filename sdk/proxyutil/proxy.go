@@ -6,10 +6,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"golang.org/x/net/proxy"
 )
+
+var dynamicProxyTemplatePattern = regexp.MustCompile(`\{([a-z_]+)(?::([^{}]+))?\}`)
 
 // Mode describes how a proxy setting should be interpreted.
 type Mode int
@@ -44,6 +47,13 @@ func Parse(raw string) (Setting, error) {
 
 	if strings.EqualFold(trimmed, "direct") || strings.EqualFold(trimmed, "none") {
 		setting.Mode = ModeDirect
+		return setting, nil
+	}
+
+	// 动态代理模板需要在请求上下文里展开。对启动期、后台任务等无上下文链路，
+	// 这里将其视为“暂不显式配置代理”，避免把合法模板误报为非法 URL。
+	if dynamicProxyTemplatePattern.MatchString(trimmed) {
+		setting.Mode = ModeInherit
 		return setting, nil
 	}
 

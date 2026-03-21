@@ -20,6 +20,11 @@ func TestParse(t *testing.T) {
 		{name: "http", input: "http://proxy.example.com:8080", want: ModeProxy},
 		{name: "https", input: "https://proxy.example.com:8443", want: ModeProxy},
 		{name: "socks5", input: "socks5://proxy.example.com:1080", want: ModeProxy},
+		{
+			name:  "dynamic resin template",
+			input: "http://gpt.{client_api_key_hash}:my-token@resin:2260",
+			want:  ModeInherit,
+		},
 		{name: "invalid", input: "bad-value", want: ModeInvalid, wantErr: true},
 	}
 
@@ -85,5 +90,35 @@ func TestBuildHTTPTransportHTTPProxy(t *testing.T) {
 	}
 	if proxyURL == nil || proxyURL.String() != "http://proxy.example.com:8080" {
 		t.Fatalf("proxy URL = %v, want http://proxy.example.com:8080", proxyURL)
+	}
+}
+
+func TestBuildHTTPTransportDynamicTemplateFallsBackToInherit(t *testing.T) {
+	t.Parallel()
+
+	transport, mode, errBuild := BuildHTTPTransport("http://gpt.{client_api_key_hash}:my-token@resin:2260")
+	if errBuild != nil {
+		t.Fatalf("BuildHTTPTransport returned error: %v", errBuild)
+	}
+	if mode != ModeInherit {
+		t.Fatalf("mode = %d, want %d", mode, ModeInherit)
+	}
+	if transport != nil {
+		t.Fatal("expected nil transport for deferred dynamic proxy template")
+	}
+}
+
+func TestBuildDialerDynamicTemplateFallsBackToInherit(t *testing.T) {
+	t.Parallel()
+
+	dialer, mode, errBuild := BuildDialer("http://gpt.{client_api_key_hash}:my-token@resin:2260")
+	if errBuild != nil {
+		t.Fatalf("BuildDialer returned error: %v", errBuild)
+	}
+	if mode != ModeInherit {
+		t.Fatalf("mode = %d, want %d", mode, ModeInherit)
+	}
+	if dialer != nil {
+		t.Fatal("expected nil dialer for deferred dynamic proxy template")
 	}
 }
