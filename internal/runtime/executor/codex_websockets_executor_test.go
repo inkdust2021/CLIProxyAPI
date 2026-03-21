@@ -193,11 +193,39 @@ func TestNewProxyAwareWebsocketDialerDirectDisablesProxy(t *testing.T) {
 	t.Parallel()
 
 	dialer := newProxyAwareWebsocketDialer(
+		context.Background(),
 		&config.Config{SDKConfig: sdkconfig.SDKConfig{ProxyURL: "http://global-proxy.example.com:8080"}},
 		&cliproxyauth.Auth{ProxyURL: "direct"},
 	)
 
 	if dialer.Proxy != nil {
 		t.Fatal("expected websocket proxy function to be nil for direct mode")
+	}
+}
+
+func TestNewProxyAwareWebsocketDialer_UsesDynamicAuthProxyURL(t *testing.T) {
+	t.Parallel()
+
+	ctx := cliproxyauth.WithRequestInfo(context.Background(), &cliproxyauth.RequestInfo{
+		Principal: "client-key-123",
+	})
+	dialer := newProxyAwareWebsocketDialer(
+		ctx,
+		&config.Config{},
+		&cliproxyauth.Auth{ProxyURL: "http://team.{client_api_key_hash}:token@proxy.example.com:2260"},
+	)
+	if dialer.Proxy == nil {
+		t.Fatal("expected websocket proxy function to be configured")
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://api.openai.com/v1/responses/ws", nil)
+	proxyURL, err := dialer.Proxy(req)
+	if err != nil {
+		t.Fatalf("dialer.Proxy returned error: %v", err)
+	}
+	if proxyURL == nil || proxyURL.Host != "proxy.example.com:2260" {
+		t.Fatalf("unexpected proxy URL: %#v", proxyURL)
+	}
+	if proxyURL.User == nil || proxyURL.User.Username() == "team.{client_api_key_hash}" {
+		t.Fatalf("expected dynamic websocket proxy username, got %v", proxyURL.User)
 	}
 }

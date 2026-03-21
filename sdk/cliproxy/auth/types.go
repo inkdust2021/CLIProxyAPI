@@ -23,8 +23,11 @@ type PostAuthHook func(context.Context, *Auth) error
 // RequestInfo holds information extracted from the HTTP request.
 // It is injected into the context passed to PostAuthHook.
 type RequestInfo struct {
-	Query   url.Values
-	Headers http.Header
+	Query     url.Values
+	Headers   http.Header
+	Principal string
+	Provider  string
+	Metadata  map[string]string
 }
 
 type requestInfoKey struct{}
@@ -40,6 +43,36 @@ func GetRequestInfo(ctx context.Context) *RequestInfo {
 		return val
 	}
 	return nil
+}
+
+// WithHTTPRequestInfo extracts request details and access metadata into context.
+func WithHTTPRequestInfo(ctx context.Context, req *http.Request, principal, provider string, metadata map[string]string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	info := &RequestInfo{
+		Principal: strings.TrimSpace(principal),
+		Provider:  strings.TrimSpace(provider),
+		Metadata:  cloneStringMap(metadata),
+	}
+	if req != nil {
+		if req.URL != nil {
+			info.Query = req.URL.Query()
+		}
+		info.Headers = req.Header.Clone()
+	}
+	return WithRequestInfo(ctx, info)
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // Auth encapsulates the runtime state and metadata associated with a single credential.

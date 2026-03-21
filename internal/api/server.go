@@ -327,6 +327,7 @@ func (s *Server) setupRoutes() {
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(RequestInfoMiddleware())
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -341,6 +342,7 @@ func (s *Server) setupRoutes() {
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
 	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(RequestInfoMiddleware())
 	{
 		v1beta.GET("/models", geminiHandlers.GeminiModels)
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -1056,5 +1058,32 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			log.Errorf("authentication middleware error: %v", err)
 		}
 		c.AbortWithStatusJSON(statusCode, gin.H{"error": err.Message})
+	}
+}
+
+// RequestInfoMiddleware injects authenticated request metadata into request context
+// so runtime proxy resolution can use per-request dynamic placeholders.
+func RequestInfoMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal := ""
+		if apiKey, exists := c.Get("apiKey"); exists {
+			if value, ok := apiKey.(string); ok {
+				principal = value
+			}
+		}
+		provider := ""
+		if accessProvider, exists := c.Get("accessProvider"); exists {
+			if value, ok := accessProvider.(string); ok {
+				provider = value
+			}
+		}
+		var metadata map[string]string
+		if accessMetadata, exists := c.Get("accessMetadata"); exists {
+			if value, ok := accessMetadata.(map[string]string); ok {
+				metadata = value
+			}
+		}
+		c.Request = c.Request.WithContext(auth.WithHTTPRequestInfo(c.Request.Context(), c.Request, principal, provider, metadata))
+		c.Next()
 	}
 }

@@ -64,6 +64,12 @@ usage-statistics-enabled: false
 
 # Proxy URL. Supports socks5/http/https protocols. Example: socks5://user:pass@192.168.1.1:1080/
 # Per-entry proxy-url also supports "direct" or "none" to bypass both the global proxy-url and environment proxies explicitly.
+# Dynamic templates are also supported:
+#   {client_api_key} / {client_api_key_hash}
+#   {request_header:X-Resin-Account} / {request_header_hash:X-Resin-Account}
+#   {request_query:resin_account} / {request_query_hash:resin_account}
+# Example for dynamic Resin routing:
+#   http://Nimbus.{client_api_key_hash}:resin-token@resin.example.com:2260
 proxy-url: ""
 
 # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).

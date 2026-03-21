@@ -14,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/claude"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/gemini"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/openai"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -30,6 +31,7 @@ func clientAPIKeyMiddleware() gin.HandlerFunc {
 			if keyStr, ok := apiKey.(string); ok && keyStr != "" {
 				// Inject into request context for SecretSource.Get(ctx) to read
 				ctx := context.WithValue(c.Request.Context(), clientAPIKeyContextKey{}, keyStr)
+				ctx = coreauth.WithHTTPRequestInfo(ctx, c.Request, keyStr, "", nil)
 				c.Request = c.Request.WithContext(ctx)
 			}
 		}

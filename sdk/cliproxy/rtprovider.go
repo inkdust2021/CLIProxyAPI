@@ -30,6 +30,9 @@ func (p *defaultRoundTripperProvider) RoundTripperFor(auth *coreauth.Auth) http.
 	if proxyStr == "" {
 		return nil
 	}
+	if strings.Contains(proxyStr, "{") && strings.Contains(proxyStr, "}") {
+		return nil
+	}
 	p.mu.RLock()
 	rt := p.cache[proxyStr]
 	p.mu.RUnlock()

@@ -31,16 +31,7 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 		httpClient.Timeout = timeout
 	}
 
-	// Priority 1: Use auth.ProxyURL if configured
-	var proxyURL string
-	if auth != nil {
-		proxyURL = strings.TrimSpace(auth.ProxyURL)
-	}
-
-	// Priority 2: Use cfg.ProxyURL if auth proxy is not configured
-	if proxyURL == "" && cfg != nil {
-		proxyURL = strings.TrimSpace(cfg.ProxyURL)
-	}
+	proxyURL := effectiveProxyURL(ctx, cfg, auth)
 
 	// If we have a proxy URL configured, set up the transport
 	if proxyURL != "" {
@@ -59,6 +50,32 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 	}
 
 	return httpClient
+}
+
+func effectiveProxyURL(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth) string {
+	if auth != nil {
+		if proxyURL, ok := resolveEffectiveProxyURL(ctx, strings.TrimSpace(auth.ProxyURL), "auth"); ok {
+			return proxyURL
+		}
+	}
+	if cfg != nil {
+		if proxyURL, ok := resolveEffectiveProxyURL(ctx, strings.TrimSpace(cfg.ProxyURL), "global"); ok {
+			return proxyURL
+		}
+	}
+	return ""
+}
+
+func resolveEffectiveProxyURL(ctx context.Context, raw, source string) (string, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return "", false
+	}
+	resolved, err := resolveDynamicProxyURL(ctx, raw)
+	if err != nil {
+		log.Errorf("failed to resolve %s proxy-url: %v", source, err)
+		return "", false
+	}
+	return resolved, resolved != ""
 }
 
 // buildProxyTransport creates an HTTP transport configured for the given proxy URL.
