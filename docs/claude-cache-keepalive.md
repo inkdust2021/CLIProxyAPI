@@ -87,6 +87,22 @@ chats or reserve a global quota slice.
 
 ## Observe costs and cache hits
 
+Open **Logs → Claude keepalive**, or select **View keepalive logs** next to the
+configuration switch. The view supports model/account/session search, outcome
+filters, manual refresh and automatic refresh every 10 seconds. It shows the
+effective enable state, tracked and paused session counts, cache-read tokens,
+replay duration and upstream HTTP status when available.
+
+`GET /v8/management/observability/claude-cache-keepalive` returns the same read-only
+snapshot under normal management authentication. The service retains the newest
+200 events in memory, including enable/disable, tracked sessions, successful
+renewals, cache misses, failures, cancellations and expirations. Disabling renewal
+preserves this history; restarting clears it. Reads do not consume usage records
+and do not require file logging. Events contain hashed account/session identifiers
+and operational metadata, never prompts, headers, credentials or raw upstream
+error messages. New successful chats are required to start tracking; historic
+events from before this version cannot be reconstructed.
+
 Renewal requests have their own usage records with source
 `claude-cache-keepalive`, credential identity, and actual token usage. They are
 accounted independently of concurrent normal chats. Pause events are logged

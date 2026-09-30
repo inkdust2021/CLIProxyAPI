@@ -62,6 +62,8 @@ type ClaudeCacheKeepalive struct {
 	busy        map[[32]byte]int
 	replay      ClaudeCacheReplay
 	now         func() time.Time
+	logs        []ClaudeCacheLogEvent
+	logID       uint64
 }
 
 func NewClaudeCacheKeepalive(replay ClaudeCacheReplay) *ClaudeCacheKeepalive {
@@ -87,6 +89,11 @@ func (k *ClaudeCacheKeepalive) SetEnabled(enabled bool) {
 	if enabled {
 		k.epoch, k.cancelEpoch = context.WithCancel(k.ctx)
 	}
+	outcome := "disabled"
+	if enabled {
+		outcome = "enabled"
+	}
+	k.appendLogLocked(ClaudeCacheLogEvent{Time: k.now().UTC(), Outcome: outcome})
 }
 
 func (k *ClaudeCacheKeepalive) Close() {
@@ -196,6 +203,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 			if k.sessions[id] == item {
 				if success {
 					item.ready = true
+					k.appendLogLocked(k.sessionLog(id, item, k.now(), "tracked"))
 				} else {
 					delete(k.sessions, id)
 				}
@@ -241,6 +249,7 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 			continue
 		}
 		if started.Sub(item.anchor) >= item.ttl {
+			k.appendLogLocked(k.sessionLog(id, item, started, "expired"))
 			delete(k.sessions, id)
 			k.mu.Unlock()
 			continue
@@ -252,7 +261,10 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 		snapshot.Body = append([]byte(nil), snapshot.Body...)
 		snapshot.Headers = snapshot.Headers.Clone()
 		k.mu.Unlock()
+		replayStart := k.now()
 		read, errReplay := k.replay(pingCtx, snapshot)
+		duration := k.now().Sub(replayStart)
+		wasCancelled := pingCtx.Err() != nil
 		stop()
 		cancel()
 		k.mu.Lock()
@@ -272,6 +284,12 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 				log.Warn("claude cache keepalive paused a session after a replay failure or repeated cache misses")
 			}
 		}
+		event := k.sessionLog(id, item, started.Add(duration), claudeCacheLogOutcome(read, errReplay, wasCancelled))
+		event.CacheReadTokens = read
+		event.DurationMS = duration.Milliseconds()
+		event.Paused = k.sessions[id] == item && item.paused
+		event.StatusCode = claudeCacheLogStatus(errReplay)
+		k.appendLogLocked(event)
 		k.mu.Unlock()
 	}
 }
