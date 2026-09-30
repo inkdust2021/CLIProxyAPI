@@ -57,6 +57,20 @@ func TestManagementV8RoutesShareAccessControl(t *testing.T) {
 					t.Fatalf("%s: status=%d want=%d body=%s", route, recorder.Code, tc.want, recorder.Body.String())
 				}
 			}
+			req := httptest.NewRequest(http.MethodPatch, "/v8/management/observability/claude-cache-keepalive/sessions/"+strings.Repeat("a", 64), strings.NewReader(`{"enabled":false}`))
+			req.RemoteAddr = "[::1]:1234"
+			if tc.authorized {
+				req.Header.Set("Authorization", "Bearer test-password")
+			}
+			w := httptest.NewRecorder()
+			s.engine.ServeHTTP(w, req)
+			want := tc.want
+			if want == 200 {
+				want = 503
+			}
+			if w.Code != want {
+				t.Fatalf("session mutation access control: %d want %d", w.Code, want)
+			}
 		})
 	}
 }

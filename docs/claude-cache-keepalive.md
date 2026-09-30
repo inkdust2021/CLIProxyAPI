@@ -87,6 +87,36 @@ successful responses without a cache read also pause it. A successful new real
 chat replaces and resumes that session. This feature does not block ordinary
 chats or reserve a global quota slice.
 
+## Manage individual sessions
+
+Open **Logs → Claude keepalive** to see current sessions above the event history.
+Each account/model/session has one row with its model, hashed identity, last user
+prompt, state, last chat time, next renewal time, and an individual keepalive
+switch. Search current sessions by prompt, model, or identity. Event history has
+its own search and outcome filters.
+
+Switching a session off cancels its active replay and saves the preference
+immediately. Later successful chats update its preview but do not re-enable it.
+The choice survives global toggles, config reloads, and restarts. Switching it
+back on uses the remaining cache TTL; it never extends or revives an expired
+snapshot. Disabled identities remain listed after restart so they can be enabled
+again even before a new chat arrives.
+
+Only the full SHA-256 session IDs are persisted in
+`oauth.providers.claude.cache-keepalive-disabled-sessions`. Prompt previews come
+from the latest successful eligible upstream snapshot, include only user text
+(excluding tool results and images), and are capped at 2,000 Unicode characters.
+They remain in memory and are exposed only through authenticated management.
+Restarting clears previews; a new successful cached chat repopulates them.
+
+`GET /v8/management/observability/claude-cache-keepalive` includes
+`session_details` and `disabled_sessions` alongside event history.
+`PATCH /v8/management/observability/claude-cache-keepalive/sessions/:id` accepts
+`{"enabled": false}` or `{"enabled": true}` under normal management
+authentication. Unknown identities return 404, invalid IDs/bodies return 400,
+and failed config saves leave the preference unchanged. Manual switch events
+contain no prompts.
+
 ## Observe costs and cache hits
 
 Open **Logs → Claude keepalive**, or select **View keepalive logs** next to the
@@ -95,7 +125,7 @@ filters, manual refresh and automatic refresh every 10 seconds. It shows the
 effective enable state, tracked and paused session counts, cache-read tokens,
 replay duration and upstream HTTP status when available.
 
-`GET /v8/management/observability/claude-cache-keepalive` returns the same read-only
+`GET /v8/management/observability/claude-cache-keepalive` returns the same operational
 snapshot under normal management authentication. The service retains the newest
 200 events in memory, including enable/disable, tracked sessions, successful
 renewals, cache misses, failures, cancellations and expirations. Disabling renewal

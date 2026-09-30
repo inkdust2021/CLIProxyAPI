@@ -967,6 +967,8 @@ oauth:
       # 5m caches renew every 4m; 1h caches every 50m. Cache reads remain billable.
       # Defaults to false and supports hot reload. See docs/claude-cache-keepalive.md.
       cache-keepalive: false
+      # Managed per-session renewal exclusions. Only opaque IDs are saved.
+      cache-keepalive-disabled-sessions: []
 
       # When true, scope quota cooldowns to the requested model rather than cooling down
       # the entire credential across all sibling models. Default is false.

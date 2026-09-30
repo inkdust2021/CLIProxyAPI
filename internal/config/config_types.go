@@ -117,6 +117,9 @@ type ClaudeConfig struct {
 	// Disabled by default; conversation snapshots are held only in memory.
 	CacheKeepalive bool `yaml:"cache-keepalive" json:"cache-keepalive"`
 
+	// CacheKeepaliveDisabledSessions persists only opaque IDs, never prompts.
+	CacheKeepaliveDisabledSessions []string `yaml:"cache-keepalive-disabled-sessions" json:"cache-keepalive-disabled-sessions"`
+
 	// ModelLevelCooling scopes Claude quota cooldowns to the requested model
 	// rather than cooling down the entire credential across all sibling models.
 	ModelLevelCooling bool `yaml:"model-level-cooling" json:"model-level-cooling"`

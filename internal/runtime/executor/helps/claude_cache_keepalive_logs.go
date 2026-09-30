@@ -27,22 +27,26 @@ type ClaudeCacheLogEvent struct {
 }
 
 type ClaudeCacheLogSnapshot struct {
-	Enabled        bool                  `json:"enabled"`
-	Sessions       int                   `json:"sessions"`
-	PausedSessions int                   `json:"paused_sessions"`
-	Capacity       int                   `json:"capacity"`
-	Events         []ClaudeCacheLogEvent `json:"events"`
+	Enabled          bool                       `json:"enabled"`
+	Sessions         int                        `json:"sessions"`
+	PausedSessions   int                        `json:"paused_sessions"`
+	DisabledSessions int                        `json:"disabled_sessions"`
+	SessionDetails   []ClaudeCacheSessionDetail `json:"session_details"`
+	Capacity         int                        `json:"capacity"`
+	Events           []ClaudeCacheLogEvent      `json:"events"`
 }
 
 // LogSnapshot returns a non-destructive copy, newest first, independent of file logging.
 func (k *ClaudeCacheKeepalive) LogSnapshot() ClaudeCacheLogSnapshot {
-	out := ClaudeCacheLogSnapshot{Capacity: claudeCacheLogCapacity, Events: []ClaudeCacheLogEvent{}}
+	out := ClaudeCacheLogSnapshot{Capacity: claudeCacheLogCapacity, Events: []ClaudeCacheLogEvent{}, SessionDetails: []ClaudeCacheSessionDetail{}}
 	if k == nil {
 		return out
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	out.Enabled, out.Sessions = k.enabled, len(k.sessions)
+	out.DisabledSessions = len(k.disabled)
+	out.SessionDetails = k.sessionDetailsLocked()
 	for _, item := range k.sessions {
 		if item.paused {
 			out.PausedSessions++

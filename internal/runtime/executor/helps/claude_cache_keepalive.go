@@ -3,6 +3,7 @@ package helps
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,15 +39,16 @@ func NewClaudeCacheUsageReporter(ctx context.Context, model string, auth *clipro
 }
 
 type claudeCacheSession struct {
-	snapshot ClaudeCacheSnapshot
-	seen     time.Time
-	anchor   time.Time
-	interval time.Duration
-	ttl      time.Duration
-	ready    bool
-	paused   bool
-	misses   int
-	cancel   context.CancelFunc
+	snapshot   ClaudeCacheSnapshot
+	lastPrompt string
+	seen       time.Time
+	anchor     time.Time
+	interval   time.Duration
+	ttl        time.Duration
+	ready      bool
+	paused     bool
+	misses     int
+	cancel     context.CancelFunc
 }
 
 // ClaudeCacheKeepalive owns bounded session snapshots and their renewal lifecycle.
@@ -65,6 +67,7 @@ type ClaudeCacheKeepalive struct {
 	now         func() time.Time
 	logs        []ClaudeCacheLogEvent
 	logID       uint64
+	disabled    map[string]bool
 }
 
 func NewClaudeCacheKeepalive(replay ClaudeCacheReplay) *ClaudeCacheKeepalive {
@@ -178,7 +181,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 		now := k.now()
 		item = &claudeCacheSession{
 			snapshot: ClaudeCacheSnapshot{AuthID: authID, URL: req.URL.String(), Headers: headers, Body: append([]byte(nil), body...)},
-			seen:     now, anchor: now, ttl: ttl, interval: interval,
+			seen:     now, anchor: now, ttl: ttl, interval: interval, lastPrompt: claudeCacheLastPrompt(body),
 		}
 	}
 	// Replace the last successful snapshot only after the newest chat succeeds.
@@ -254,7 +257,7 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 			k.mu.Unlock()
 			return
 		}
-		if item == nil || !item.ready || item.paused || k.busy[id] > 0 || started.Sub(item.anchor) < item.interval {
+		if item == nil || !item.ready || k.disabled[hex.EncodeToString(id[:])] || item.paused || k.busy[id] > 0 || started.Sub(item.anchor) < item.interval {
 			k.mu.Unlock()
 			continue
 		}

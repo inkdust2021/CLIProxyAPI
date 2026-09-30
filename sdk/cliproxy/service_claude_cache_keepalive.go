@@ -22,6 +22,9 @@ func (s *Service) claudeCacheKeeper() *helps.ClaudeCacheKeepalive {
 		cfg := s.cfg
 		s.cfgMu.RUnlock()
 		s.claudeCache.SetEnabled(cfg != nil && cfg.Claude.CacheKeepalive && !cfg.Home.Enabled)
+		if cfg != nil {
+			s.claudeCache.SetDisabledSessions(cfg.Claude.CacheKeepaliveDisabledSessions)
+		}
 	}
 	return s.claudeCache
 }
@@ -29,7 +32,13 @@ func (s *Service) claudeCacheKeeper() *helps.ClaudeCacheKeepalive {
 func (s *Service) configureClaudeCacheKeepalive(cfg *config.Config) {
 	// Home credentials belong to individual execution sessions and cannot be
 	// safely renewed by a detached local worker.
-	s.claudeCacheKeeper().SetEnabled(cfg != nil && cfg.Claude.CacheKeepalive && !cfg.Home.Enabled)
+	keeper := s.claudeCacheKeeper()
+	keeper.SetEnabled(cfg != nil && cfg.Claude.CacheKeepalive && !cfg.Home.Enabled)
+	var disabled []string
+	if cfg != nil {
+		disabled = cfg.Claude.CacheKeepaliveDisabledSessions
+	}
+	keeper.SetDisabledSessions(disabled)
 }
 
 func (s *Service) replayClaudeCache(ctx context.Context, snapshot helps.ClaudeCacheSnapshot) (int64, error) {

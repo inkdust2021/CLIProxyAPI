@@ -40,6 +40,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8.GET("/observability/usage/api-keys", s.mgmt.GetAPIKeyUsage)
 	v8.GET("/observability/usage/queue", s.mgmt.GetUsageQueue)
 	v8.GET("/observability/claude-cache-keepalive", s.mgmt.GetClaudeCacheKeepalive)
+	v8.PATCH("/observability/claude-cache-keepalive/sessions/:id", s.mgmt.PatchClaudeCacheKeepaliveSession)
 
 	v8.GET("/credentials/quota/providers", s.mgmt.GetQuotaProviders)
 	v8.POST("/credentials/quota/fetch", s.mgmt.FetchCredentialQuota)

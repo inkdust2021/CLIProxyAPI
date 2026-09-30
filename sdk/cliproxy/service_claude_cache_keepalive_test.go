@@ -93,3 +93,34 @@ func TestServiceClaudeCacheKeepaliveRejectsUnavailableAuth(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceClaudeCacheKeepaliveDisabledSessionReload(t *testing.T) {
+	s := &Service{cfg: &config.Config{Claude: internalconfig.ClaudeConfig{CacheKeepalive: true}}}
+	k := s.claudeCacheKeeper()
+	defer k.Close()
+	req, err := http.NewRequest(http.MethodPost, "https://example.test/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"model":"claude-sonnet-5","max_tokens":100,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":"q"}]}`)
+	k.Begin("a", "s", req, body)(true)
+	id := k.LogSnapshot().SessionDetails[0].ID
+	cfg := s.cfg.CloneForRuntime()
+	cfg.Claude.CacheKeepaliveDisabledSessions = []string{id}
+	s.configureClaudeCacheKeepalive(cfg)
+	if k.LogSnapshot().SessionDetails[0].State != "disabled" {
+		t.Fatal("reload did not apply disabled session preference")
+	}
+	fresh := &Service{cfg: cfg}
+	other := fresh.claudeCacheKeeper()
+	defer other.Close()
+	other.Begin("a", "s", req, body)(true)
+	if other.LogSnapshot().SessionDetails[0].State != "disabled" {
+		t.Fatal("startup forgot persisted disabled session")
+	}
+	cfg.Claude.CacheKeepaliveDisabledSessions = nil
+	s.configureClaudeCacheKeepalive(cfg)
+	if k.LogSnapshot().SessionDetails[0].State != "active" {
+		t.Fatal("reload failed to resume valid session")
+	}
+}
