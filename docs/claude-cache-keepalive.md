@@ -55,7 +55,9 @@ Renewal follows the shortest TTL actually present in the request:
 A 30-second scheduler checks for due sessions. TTL starts when the original or
 renewal request starts, rather than when its response finishes. In-flight real
 requests are not replayed. A new chat cancels an older replay for the same
-account/model/session and replaces its snapshot. Expired snapshots are discarded
+account/model/session. Only its successful completion with cache usage replaces
+the snapshot; failures, missing cache usage, and ineligible requests retain the
+last successful snapshot without extending its TTL. Expired snapshots are discarded
 instead of deliberately paying to rewrite them.
 
 The switch does not force 1h TTL onto client requests. To use the 50-minute
@@ -101,7 +103,10 @@ preserves this history; restarting clears it. Reads do not consume usage records
 and do not require file logging. Events contain hashed account/session identifiers
 and operational metadata, never prompts, headers, credentials or raw upstream
 error messages. New successful chats are required to start tracking; historic
-events from before this version cannot be reconstructed.
+events from before this version cannot be reconstructed. This is an event history,
+not a list of separate renewal tasks: repeated successful chats and renewals can
+produce several rows with the same account/session ID while using one tracked
+session slot.
 
 Renewal requests have their own usage records with source
 `claude-cache-keepalive`, credential identity, and actual token usage. They are

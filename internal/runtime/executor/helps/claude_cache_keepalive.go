@@ -59,6 +59,7 @@ type ClaudeCacheKeepalive struct {
 	enabled     bool
 	running     bool
 	sessions    map[[32]byte]*claudeCacheSession
+	pending     map[[32]byte]*claudeCacheSession
 	busy        map[[32]byte]int
 	replay      ClaudeCacheReplay
 	now         func() time.Time
@@ -85,6 +86,7 @@ func (k *ClaudeCacheKeepalive) SetEnabled(enabled bool) {
 	}
 	k.enabled = enabled
 	k.sessions = make(map[[32]byte]*claudeCacheSession)
+	k.pending = make(map[[32]byte]*claudeCacheSession)
 	k.busy = make(map[[32]byte]int)
 	if enabled {
 		k.epoch, k.cancelEpoch = context.WithCancel(k.ctx)
@@ -148,44 +150,39 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 		}
 	}
 	id := sha256.Sum256([]byte(authID + "\x00" + req.URL.String() + "\x00" + model + "\x00" + sessionID))
-	if old := k.sessions[id]; old != nil && old.cancel != nil {
-		old.cancel()
-	}
-	delete(k.sessions, id)
 	ttl := claudeCacheTTL(req.Header, body)
-	if req.Method != http.MethodPost || ttl == 0 || len(body) > claudeCacheMaxBody {
+	eligible := req.Method == http.MethodPost && ttl != 0 && len(body) <= claudeCacheMaxBody
+	if !eligible && k.sessions[id] == nil && k.pending[id] == nil {
 		return noop
 	}
-	if len(k.sessions) >= claudeCacheMaxSessions {
-		var oldestID [32]byte
-		var oldest *claudeCacheSession
-		for key, item := range k.sessions {
-			if oldest == nil || item.seen.Before(oldest.seen) {
-				oldestID, oldest = key, item
+	if old := k.sessions[id]; old != nil && old.cancel != nil {
+		old.cancel()
+		// A cancelled replay must not pause the retained successful snapshot.
+		retained := *old
+		retained.cancel = nil
+		k.sessions[id] = &retained
+	}
+	item := &claudeCacheSession{}
+	if eligible {
+		headers := req.Header.Clone()
+		for key := range headers {
+			switch strings.ToLower(key) {
+			case "authorization", "x-api-key", "proxy-authorization", "cookie", "content-length":
+				delete(headers, key)
 			}
 		}
-		if oldest.cancel != nil {
-			oldest.cancel()
+		interval := 4 * time.Minute
+		if ttl == time.Hour {
+			interval = 50 * time.Minute
 		}
-		delete(k.sessions, oldestID)
-	}
-	headers := req.Header.Clone()
-	for key := range headers {
-		switch strings.ToLower(key) {
-		case "authorization", "x-api-key", "proxy-authorization", "cookie", "content-length":
-			delete(headers, key)
+		now := k.now()
+		item = &claudeCacheSession{
+			snapshot: ClaudeCacheSnapshot{AuthID: authID, URL: req.URL.String(), Headers: headers, Body: append([]byte(nil), body...)},
+			seen:     now, anchor: now, ttl: ttl, interval: interval,
 		}
 	}
-	interval := 4 * time.Minute
-	if ttl == time.Hour {
-		interval = 50 * time.Minute
-	}
-	now := k.now()
-	item := &claudeCacheSession{
-		snapshot: ClaudeCacheSnapshot{AuthID: authID, URL: req.URL.String(), Headers: headers, Body: append([]byte(nil), body...)},
-		seen:     now, anchor: now, ttl: ttl, interval: interval,
-	}
-	k.sessions[id] = item
+	// Replace the last successful snapshot only after the newest chat succeeds.
+	k.pending[id] = item
 	k.busy[id]++
 	epoch := k.epoch
 	var once sync.Once
@@ -200,12 +197,25 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 			if k.busy[id] == 0 {
 				delete(k.busy, id)
 			}
-			if k.sessions[id] == item {
-				if success {
+			if k.pending[id] == item {
+				delete(k.pending, id)
+				if success && eligible {
+					if k.sessions[id] == nil && len(k.sessions) >= claudeCacheMaxSessions {
+						var oldestID [32]byte
+						var oldest *claudeCacheSession
+						for key, retained := range k.sessions {
+							if oldest == nil || retained.seen.Before(oldest.seen) {
+								oldestID, oldest = key, retained
+							}
+						}
+						if oldest.cancel != nil {
+							oldest.cancel()
+						}
+						delete(k.sessions, oldestID)
+					}
 					item.ready = true
+					k.sessions[id] = item
 					k.appendLogLocked(k.sessionLog(id, item, k.now(), "tracked"))
-				} else {
-					delete(k.sessions, id)
 				}
 			}
 		})

@@ -92,6 +92,136 @@ func TestClaudeCacheKeepalivePreservesPrefix(t *testing.T) {
 	}
 }
 
+func TestClaudeCacheKeepaliveRetainsLastGoodSnapshot(t *testing.T) {
+	for _, outcome := range []string{"failed-or-no-cache-usage", "ineligible"} {
+		t.Run(outcome, func(t *testing.T) {
+			now := time.Unix(1000000, 0)
+			calls := 0
+			k := NewClaudeCacheKeepalive(func(context.Context, ClaudeCacheSnapshot) (int64, error) {
+				calls++
+				return 1000, nil
+			})
+			defer k.Close()
+			k.now = func() time.Time { return now }
+			k.SetEnabled(true)
+			k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))(true)
+			now = now.Add(50 * time.Minute)
+			k.ReplayDue(context.Background(), now)
+			now = now.Add(39 * time.Minute)
+			body := keepaliveTestBody
+			if outcome == "ineligible" {
+				body = strings.ReplaceAll(body, `"adaptive"`, `"enabled"`)
+			}
+			finish := k.Begin("a", "s", keepaliveTestRequest(t), []byte(body))
+			now = now.Add(11 * time.Minute)
+			k.ReplayDue(context.Background(), now)
+			if calls != 1 {
+				t.Fatal("replayed while a real chat was in flight")
+			}
+			finish(outcome == "ineligible")
+			if snapshot := k.LogSnapshot(); snapshot.Sessions != 1 || snapshot.PausedSessions != 0 {
+				t.Fatalf("new request discarded the last good snapshot: %+v", snapshot)
+			}
+			for round := 2; round <= 5; round++ {
+				k.ReplayDue(context.Background(), now)
+				if calls != round {
+					t.Fatalf("renewal round %d: calls = %d", round, calls)
+				}
+				now = now.Add(50 * time.Minute)
+			}
+		})
+	}
+}
+
+func TestClaudeCacheKeepaliveFailedReplacementDoesNotExtendTTL(t *testing.T) {
+	now := time.Unix(1000000, 0)
+	k := NewClaudeCacheKeepalive(func(context.Context, ClaudeCacheSnapshot) (int64, error) {
+		t.Fatal("replayed a cache that expired during a failed replacement")
+		return 0, nil
+	})
+	defer k.Close()
+	k.now = func() time.Time { return now }
+	k.SetEnabled(true)
+	k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))(true)
+	now = now.Add(59 * time.Minute)
+	finish := k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))
+	now = now.Add(2 * time.Minute)
+	finish(false)
+	k.ReplayDue(context.Background(), now)
+	snapshot := k.LogSnapshot()
+	if snapshot.Sessions != 0 || snapshot.Events[0].Outcome != "expired" {
+		t.Fatalf("failed chat changed the old cache expiration: %+v", snapshot)
+	}
+}
+
+func TestClaudeCacheKeepaliveRepeatedChatUsesOneSession(t *testing.T) {
+	k := NewClaudeCacheKeepalive(nil)
+	defer k.Close()
+	k.SetEnabled(true)
+	for i := 0; i < 5; i++ {
+		k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))(true)
+	}
+	snapshot := k.LogSnapshot()
+	if snapshot.Sessions != 1 || len(snapshot.Events) != 6 {
+		t.Fatalf("chat events should update one session, not create duplicate tasks: %+v", snapshot)
+	}
+}
+
+func TestClaudeCacheKeepaliveOlderCompletionCannotReplaceNewestSnapshot(t *testing.T) {
+	for _, olderSuccess := range []bool{false, true} {
+		k := NewClaudeCacheKeepalive(func(_ context.Context, snap ClaudeCacheSnapshot) (int64, error) {
+			if gjson.GetBytes(snap.Body, "max_tokens").Int() != 200 {
+				t.Fatal("older completion replaced the newest successful chat")
+			}
+			return 1000, nil
+		})
+		k.SetEnabled(true)
+		now := time.Unix(1000000, 0)
+		k.now = func() time.Time { return now }
+		older := k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))
+		newestBody := strings.ReplaceAll(keepaliveTestBody, `"max_tokens":100`, `"max_tokens":200`)
+		k.Begin("a", "s", keepaliveTestRequest(t), []byte(newestBody))(true)
+		older(olderSuccess)
+		now = now.Add(50 * time.Minute)
+		k.ReplayDue(context.Background(), now)
+		if len(k.pending) != 0 || len(k.busy) != 0 {
+			t.Fatal("completed chats retained pending state")
+		}
+		k.Close()
+	}
+}
+
+func TestClaudeCacheKeepaliveFailedChatRetainsCancelledSnapshot(t *testing.T) {
+	started, done := make(chan struct{}), make(chan struct{})
+	calls := 0
+	k := NewClaudeCacheKeepalive(func(ctx context.Context, _ ClaudeCacheSnapshot) (int64, error) {
+		calls++
+		if calls == 1 {
+			close(started)
+			<-ctx.Done()
+			return 0, ctx.Err()
+		}
+		return 1000, nil
+	})
+	defer k.Close()
+	k.SetEnabled(true)
+	now := time.Unix(1000000, 0)
+	k.now = func() time.Time { return now }
+	k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))(true)
+	go func() {
+		k.ReplayDue(context.Background(), now.Add(50*time.Minute))
+		close(done)
+	}()
+	<-started
+	finish := k.Begin("a", "s", keepaliveTestRequest(t), []byte(keepaliveTestBody))
+	finish(false)
+	<-done
+	k.ReplayDue(context.Background(), now.Add(50*time.Minute))
+	if snapshot := k.LogSnapshot(); calls != 2 || snapshot.Sessions != 1 || snapshot.PausedSessions != 0 {
+		t.Fatalf("cancelled stale replay stopped the retained snapshot: calls=%d snapshot=%+v", calls, snapshot)
+	}
+}
+
 func TestClaudeCacheKeepaliveSkipsIneligibleAndExpired(t *testing.T) {
 	for _, body := range []string{
 		`{"max_tokens":100,"messages":[]}`,
