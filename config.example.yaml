@@ -963,6 +963,11 @@ oauth:
 
     # Provider-wide Claude settings.
     claude:
+      # Keep eligible prompt caches warm using the original account and final upstream prompt.
+      # 5m caches renew every 4m; 1h caches every 50m. Cache reads remain billable.
+      # Defaults to false and supports hot reload. See docs/claude-cache-keepalive.md.
+      cache-keepalive: false
+
       # When true, scope quota cooldowns to the requested model rather than cooling down
       # the entire credential across all sibling models. Default is false.
       model-level-cooling: false

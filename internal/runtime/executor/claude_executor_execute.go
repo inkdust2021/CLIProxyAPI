@@ -328,6 +328,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
+	finishCache := e.beginCacheKeepalive(auth, claudeSessionID, httpReq, incomingHeaders, bodyForUpstream, originalPayloadSource)
+	cacheUsed := false
+	defer func() { finishCache(err == nil && cacheUsed) }()
 	httpResp, err := doClaudeUpstreamRequest(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
@@ -408,11 +411,16 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			lines[i] = restoredLine
 		}
 		streamUsage.Publish(ctx, reporter)
+		if detail, ok := streamUsage.Detail(); ok {
+			cacheUsed = detail.CacheReadTokens > 0 || detail.CacheCreationTokens > 0
+		}
 		data = bytes.Join(lines, []byte("\n"))
 	} else {
 		commitClaudeContinuity(diagnosticsState, claudeMessageIDFromResponse(data), helps.HeaderValueCaseInsensitive(httpResp.Header, "request-id"))
 		reporter.ObserveResponseModel(data)
-		reporter.Publish(ctx, helps.ParseClaudeUsage(data))
+		detail := helps.ParseClaudeUsage(data)
+		cacheUsed = detail.CacheReadTokens > 0 || detail.CacheCreationTokens > 0
+		reporter.Publish(ctx, detail)
 		var errRestore error
 		data, errRestore = restoreClaudeOAuthToolNamesFromResponse(data, oauthToolNamesReverseMap)
 		if errRestore != nil {

@@ -322,6 +322,13 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpClient = reporter.TrackHTTPClient(httpClient)
+	finishCache := e.beginCacheKeepalive(auth, claudeSessionID, httpReq, incomingHeaders, bodyForUpstream, originalPayloadSource)
+	cacheHandedOff := false
+	defer func() {
+		if !cacheHandedOff {
+			finishCache(false)
+		}
+	}()
 	httpResp, err := doClaudeUpstreamRequest(httpClient, httpReq)
 	if err != nil {
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
@@ -369,6 +376,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		return nil, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, err)
 	}
 	out := make(chan cliproxyexecutor.StreamChunk, 1)
+	cacheHandedOff = true
 	go func() {
 		defer close(out)
 		defer func() {
@@ -377,6 +385,11 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 		}()
 		var streamUsage helps.StreamUsageBuffer
+		cacheComplete := false
+		defer func() {
+			detail, ok := streamUsage.Detail()
+			finishCache(cacheComplete && ctx.Err() == nil && ok && (detail.CacheReadTokens > 0 || detail.CacheCreationTokens > 0))
+		}()
 		defer streamUsage.Publish(ctx, reporter)
 		emitCancellation := func(cause error) bool {
 			cancelErr := newClaudeOAuthCancellationError(ctx, fp.OAuthCancellation, cause)
@@ -465,6 +478,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				}
 			}
 			if upstreamCompleted {
+				cacheComplete = true
 				commitClaudeContinuity(diagnosticsState, upstreamMessageID, helps.HeaderValueCaseInsensitive(httpResp.Header, "request-id"))
 			}
 			return
@@ -531,6 +545,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 		}
 		if upstreamCompleted {
+			cacheComplete = true
 			commitClaudeContinuity(diagnosticsState, upstreamMessageID, helps.HeaderValueCaseInsensitive(httpResp.Header, "request-id"))
 		}
 	}()

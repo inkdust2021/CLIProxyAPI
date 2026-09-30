@@ -1,10 +1,12 @@
 package executor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -25,6 +27,7 @@ type ClaudeExecutor struct {
 	requestLogProvider      string
 	upstreamModelNormalizer func(string) string
 	oauthProfileFetcher     claudeOAuthProfileFetcher
+	cacheKeepalive          *helps.ClaudeCacheKeepalive
 }
 
 type claudeOAuthCancellationError struct {
@@ -137,6 +140,118 @@ func logClaudeSignatureSanitizeReport(ctx context.Context, baseModel string, rep
 const defaultModelMaxTokens = 1024
 
 func NewClaudeExecutor(cfg *config.Config) *ClaudeExecutor { return &ClaudeExecutor{cfg: cfg} }
+
+// SetCacheKeepalive binds the service-owned scheduler before executor registration.
+func (e *ClaudeExecutor) SetCacheKeepalive(keeper *helps.ClaudeCacheKeepalive) {
+	e.cacheKeepalive = keeper
+}
+
+func (e *ClaudeExecutor) beginCacheKeepalive(auth *cliproxyauth.Auth, sessionID string, req *http.Request, incoming http.Header, body, original []byte) func(bool) {
+	if e.cacheKeepalive == nil || e.cfg == nil || !e.cfg.Claude.CacheKeepalive ||
+		auth == nil || !strings.EqualFold(auth.Provider, "claude") || helps.ClaudeCacheIsSubagent(incoming, original) {
+		return func(bool) {}
+	}
+	if sessionID == "" {
+		sessionID = helps.ExtractClaudeCodeSessionID(req.Context(), body, incoming)
+	}
+	return e.cacheKeepalive.Begin(auth.ID, sessionID, req, body)
+}
+
+// ReplayCache sends a final upstream snapshot with fresh credentials, without
+// rerunning translation, cloaking, continuity updates, or tool alias generation.
+func (e *ClaudeExecutor) ReplayCache(ctx context.Context, auth *cliproxyauth.Auth, snapshot helps.ClaudeCacheSnapshot) (cacheRead int64, err error) {
+	if e.cfg == nil || !e.cfg.Claude.CacheKeepalive || auth == nil || auth.Disabled || auth.ID != snapshot.AuthID {
+		return 0, fmt.Errorf("claude cache keepalive: disabled or unavailable credential")
+	}
+	_, baseURL := claudeCreds(auth)
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
+	}
+	if snapshot.URL != fmt.Sprintf("%s/v1/messages?beta=true", baseURL) {
+		return 0, fmt.Errorf("claude cache keepalive: upstream changed")
+	}
+	body, err := helps.ClaudeCacheReplayBody(snapshot.Body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, snapshot.URL, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header = snapshot.Headers.Clone()
+	// Preserve the original transport mode and CCH: max_tokens is excluded from
+	// the CCH signature, so the signed system prefix does not need rewriting.
+	if err = e.PrepareRequest(req, auth); err != nil {
+		return 0, err
+	}
+	reporter := helps.NewClaudeCacheUsageReporter(ctx, gjson.GetBytes(body, "model").String(), auth)
+	reporter.SetStream(gjson.GetBytes(body, "stream").Bool())
+	reporter.SetTranslatedReasoningEffort(body, "claude")
+	defer reporter.TrackFailure(ctx, &err)
+	client := reporter.TrackHTTPClient(helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0))
+	resp, err := doClaudeUpstreamRequest(client, req)
+	if err != nil {
+		return 0, err
+	}
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, resp.StatusCode, resp.Header.Clone())
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			log.Debug("claude cache keepalive: response close failed")
+		}
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, statusErr{code: resp.StatusCode, msg: "claude cache keepalive: upstream rejected replay"}
+	}
+	decoded, err := decodeResponseBody(resp.Body, claudeResponseContentEncoding(resp.Header))
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if errClose := decoded.Close(); errClose != nil {
+			log.Debug("claude cache keepalive: decoded response close failed")
+		}
+	}()
+	if gjson.GetBytes(body, "stream").Bool() {
+		var buffer helps.StreamUsageBuffer
+		complete := false
+		scanner := bufio.NewScanner(decoded)
+		scanner.Buffer(nil, 1<<20)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			buffer.ObserveClaudeStream(line)
+			payload := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(line), []byte("data:")))
+			switch gjson.GetBytes(payload, "type").String() {
+			case "error":
+				return 0, fmt.Errorf("claude cache keepalive: upstream stream error")
+			case "message_stop":
+				complete = true
+			}
+			if complete {
+				break
+			}
+		}
+		if err = scanner.Err(); err != nil {
+			return 0, err
+		}
+		detail, ok := buffer.Detail()
+		if !complete || !ok {
+			return 0, fmt.Errorf("claude cache keepalive: incomplete stream or missing usage")
+		}
+		buffer.Publish(ctx, reporter)
+		return detail.CacheReadTokens, nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(decoded, 1<<20))
+	if err != nil {
+		return 0, err
+	}
+	if !gjson.ValidBytes(raw) || gjson.GetBytes(raw, "type").String() != "message" || !gjson.GetBytes(raw, "usage").Exists() {
+		return 0, fmt.Errorf("claude cache keepalive: invalid response or missing usage")
+	}
+	detail := helps.ParseClaudeUsage(raw)
+	reporter.ObserveResponseModel(raw)
+	reporter.Publish(ctx, detail)
+	return detail.CacheReadTokens, nil
+}
 
 func (e *ClaudeExecutor) Identifier() string { return "claude" }
 

@@ -113,6 +113,10 @@ func defaultPluginInstanceConfigNode() *yaml.Node {
 
 // ClaudeConfig configures provider-wide Claude request behavior.
 type ClaudeConfig struct {
+	// CacheKeepalive renews eligible Claude prompt caches while the service runs.
+	// Disabled by default; conversation snapshots are held only in memory.
+	CacheKeepalive bool `yaml:"cache-keepalive" json:"cache-keepalive"`
+
 	// ModelLevelCooling scopes Claude quota cooldowns to the requested model
 	// rather than cooling down the entire credential across all sibling models.
 	ModelLevelCooling bool `yaml:"model-level-cooling" json:"model-level-cooling"`

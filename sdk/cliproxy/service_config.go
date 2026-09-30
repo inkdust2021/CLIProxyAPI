@@ -151,6 +151,7 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if !s.applyManagerConfig(ctx, commit) {
 		return false
 	}
+	s.configureClaudeCacheKeepalive(cfg)
 	if errContext := ctx.Err(); errContext != nil {
 		return false
 	}

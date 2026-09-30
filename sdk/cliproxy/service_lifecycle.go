@@ -50,6 +50,8 @@ func (s *Service) Run(ctx context.Context) error {
 	}()
 
 	usage.StartDefault(ctx)
+	s.configureClaudeCacheKeepalive(s.cfg)
+	go s.claudeCacheKeeper().Run(ctx)
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {
 		forceHomeRuntimeConfig(s.cfg)
@@ -233,6 +235,12 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.shutdownOnce.Do(func() {
 		if ctx == nil {
 			ctx = context.Background()
+		}
+		s.claudeCacheMu.Lock()
+		keeper := s.claudeCache
+		s.claudeCacheMu.Unlock()
+		if keeper != nil {
+			keeper.Close()
 		}
 
 		s.homeLifecycleMu.Lock()
