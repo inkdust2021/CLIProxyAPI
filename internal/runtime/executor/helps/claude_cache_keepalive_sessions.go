@@ -10,7 +10,7 @@ import (
 )
 
 // ClaudeCacheSessionDetail describes one current snapshot, not its event history.
-// Prompt previews are memory-only and exposed through authenticated management.
+// Prompt previews are derived from snapshots and exposed through authenticated management.
 type ClaudeCacheSessionDetail struct {
 	ID           string     `json:"id"`
 	Model        string     `json:"model"`
@@ -94,7 +94,7 @@ func claudeCacheLastPrompt(body []byte) string {
 }
 
 // SetDisabledSessions applies operator preferences without discarding valid snapshots.
-// Only opaque session IDs are persisted; prompts and upstream bodies stay in memory.
+// Session preferences are supplied by configuration, separately from encrypted snapshots.
 func (k *ClaudeCacheKeepalive) SetDisabledSessions(ids []string) {
 	if k == nil {
 		return
@@ -108,6 +108,9 @@ func (k *ClaudeCacheKeepalive) SetDisabledSessions(ids []string) {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if k.ctx.Err() != nil {
+		return
+	}
 	for id, item := range k.sessions {
 		key := hex.EncodeToString(id[:])
 		if k.disabled[key] == next[key] {
@@ -130,4 +133,5 @@ func (k *ClaudeCacheKeepalive) SetDisabledSessions(ids []string) {
 		k.appendLogLocked(k.sessionLog(id, &retained, k.now(), outcome))
 	}
 	k.disabled = next
+	k.persistLocked()
 }

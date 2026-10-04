@@ -51,7 +51,6 @@ func (s *Service) Run(ctx context.Context) error {
 
 	usage.StartDefault(ctx)
 	s.configureClaudeCacheKeepalive(s.cfg)
-	go s.claudeCacheKeeper().Run(ctx)
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {
 		forceHomeRuntimeConfig(s.cfg)
@@ -94,6 +93,9 @@ func (s *Service) Run(ctx context.Context) error {
 		s.coreManager.StartAutoRefresh(ctx, interval)
 		log.Infof("core auth auto-refresh started (interval=%s)", interval)
 	}
+
+	// Restored renewals must wait until their original credentials and executors are ready.
+	go s.claudeCacheKeeper().Run(ctx)
 
 	if !homeEnabled {
 		tokenResult, err := s.tokenProvider.Load(ctx, s.cfg)

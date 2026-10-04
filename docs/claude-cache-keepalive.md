@@ -22,8 +22,8 @@ oauth:
 
 The legacy `claude.cache-keepalive` spelling is also accepted. Configuration file
 hot reload applies the switch. Set it to `false` to cancel pending background
-requests and discard all saved conversation snapshots. Restarting also clears
-the snapshots; send a real chat request after enabling to populate them.
+requests and discard all saved conversation snapshots. Service restarts preserve successful snapshots and restore those whose original
+cache TTL has not expired. Restarting does not reset the cache lifetime.
 
 ## How renewal works
 
@@ -70,8 +70,9 @@ upstream request. Otherwise the existing 5m TTL is used.
   4 MiB. The least recently used conversation is replaced when capacity is reached.
 - Session IDs separate conversations; without one, identity is derived from the
   original account, model, upstream URL, system/tools, and first user message.
-- Conversations and authorization headers are not persisted. Authorization is
-  reconstructed from the original account when replaying.
+- Successful upstream conversation snapshots are encrypted on disk in the auth
+  directory. Authorization headers are excluded and reconstructed from the original
+  account when replaying. Pending or unsuccessful requests are never saved.
 - Claude Code subagents/background requests, token-counting requests, requests
   without cache markers, and requests that report no cache usage are excluded.
 - Manual `thinking.type: enabled` requests are excluded because their required
@@ -106,8 +107,8 @@ Only the full SHA-256 session IDs are persisted in
 `oauth.providers.claude.cache-keepalive-disabled-sessions`. Prompt previews come
 from the latest successful eligible upstream snapshot, include only user text
 (excluding tool results and images), and are capped at 2,000 Unicode characters.
-They remain in memory and are exposed only through authenticated management.
-Restarting clears previews; a new successful cached chat repopulates them.
+They are exposed only through authenticated management and are reconstructed
+from encrypted successful snapshots after restart.
 
 `GET /v8/management/observability/claude-cache-keepalive` includes
 `session_details` and `disabled_sessions` alongside event history.
@@ -116,6 +117,35 @@ Restarting clears previews; a new successful cached chat repopulates them.
 authentication. Unknown identities return 404, invalid IDs/bodies return 400,
 and failed config saves leave the preference unchanged. Manual switch events
 contain no prompts.
+
+## Restart recovery
+
+Recovery is automatic when the configured auth directory is available. The
+service writes `.claude-cache-keepalive.bin` using AES-256-GCM and a random local
+key in `.claude-cache-keepalive.key`. Both files have owner-only permissions.
+Keep the two files together when backing up or moving the auth directory; losing
+the key makes saved state unreadable. Docker deployments must persist the auth
+directory, as they already do for provider credentials.
+
+Successful chats and renewal results are saved immediately using atomic file
+replacement. Recovery does not depend on graceful shutdown. Startup loads the
+bounded history and still-valid successful snapshots, preserving account/session
+identity, last chat time, the original TTL anchor, pause/miss state and configured
+per-session exclusions. The scheduler checks restored due sessions as soon as
+the original credential and executor setup is complete. Bearer tokens, cookies
+and API-key authorization headers are not saved; replays resolve current
+credentials as before.
+
+Stopping the service cancels workers without disabling or erasing recovery
+state. Turning the global keepalive switch off deliberately discards snapshots
+but retains history. After a restart longer than a cache's remaining TTL, the
+snapshot is skipped rather than deliberately paying to rewrite expired content.
+Persistence errors produce operational warnings and do not fail real chats.
+Unreadable or corrupt recovery files are retained rather than overwritten.
+
+Upgrading from a memory-only version cannot recover snapshots already lost in
+a prior restart. A new successful eligible chat populates durable state for the
+next restart.
 
 ## Observe costs and cache hits
 
@@ -127,13 +157,14 @@ replay duration and upstream HTTP status when available.
 
 `GET /v8/management/observability/claude-cache-keepalive` returns the same operational
 snapshot under normal management authentication. The service retains the newest
-200 events in memory, including enable/disable, tracked sessions, successful
+200 events, persisted alongside the encrypted recovery state, including
+enable/disable, tracked sessions, successful
 renewals, cache misses, failures, cancellations and expirations. Disabling renewal
-preserves this history; restarting clears it. Reads do not consume usage records
+preserves this history; restarting restores it. Reads do not consume usage records
 and do not require file logging. Events contain hashed account/session identifiers
 and operational metadata, never prompts, headers, credentials or raw upstream
-error messages. New successful chats are required to start tracking; historic
-events from before this version cannot be reconstructed. This is an event history,
+error messages. New successful chats are required to initially populate tracking; historic
+events and snapshots lost by older memory-only versions cannot be reconstructed. This is an event history,
 not a list of separate renewal tasks: repeated successful chats and renewals can
 produce several rows with the same account/session ID while using one tracked
 session slot.

@@ -67,6 +67,7 @@ func (k *ClaudeCacheKeepalive) appendLogLocked(event ClaudeCacheLogEvent) {
 	} else {
 		k.logs = append(k.logs, event)
 	}
+	k.persistLocked()
 }
 
 func (k *ClaudeCacheKeepalive) sessionLog(id [32]byte, item *claudeCacheSession, at time.Time, outcome string) ClaudeCacheLogEvent {

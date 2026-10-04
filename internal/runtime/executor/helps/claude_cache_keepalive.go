@@ -68,6 +68,7 @@ type ClaudeCacheKeepalive struct {
 	logs        []ClaudeCacheLogEvent
 	logID       uint64
 	disabled    map[string]bool
+	persistence *claudeCachePersistence
 }
 
 func NewClaudeCacheKeepalive(replay ClaudeCacheReplay) *ClaudeCacheKeepalive {
@@ -102,10 +103,23 @@ func (k *ClaudeCacheKeepalive) SetEnabled(enabled bool) {
 }
 
 func (k *ClaudeCacheKeepalive) Close() {
-	if k != nil {
-		k.SetEnabled(false)
-		k.cancel()
+	if k == nil {
+		return
 	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.ctx.Err() != nil {
+		return
+	}
+	k.cancel()
+	if k.cancelEpoch != nil {
+		k.cancelEpoch()
+	}
+	k.epoch = nil
+	k.enabled = false
+	k.sessions = make(map[[32]byte]*claudeCacheSession)
+	k.pending = make(map[[32]byte]*claudeCacheSession)
+	k.busy = make(map[[32]byte]int)
 }
 
 func (k *ClaudeCacheKeepalive) Run(ctx context.Context) {
@@ -115,6 +129,7 @@ func (k *ClaudeCacheKeepalive) Run(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	defer k.Close()
+	k.ReplayDue(ctx, k.now())
 	for {
 		select {
 		case <-ctx.Done():
@@ -136,7 +151,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if !k.enabled {
+	if !k.enabled || k.ctx.Err() != nil {
 		return noop
 	}
 	model := gjson.GetBytes(body, "model").String()
@@ -167,13 +182,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 	}
 	item := &claudeCacheSession{}
 	if eligible {
-		headers := req.Header.Clone()
-		for key := range headers {
-			switch strings.ToLower(key) {
-			case "authorization", "x-api-key", "proxy-authorization", "cookie", "content-length":
-				delete(headers, key)
-			}
-		}
+		headers := claudeCacheSnapshotHeaders(req.Header)
 		interval := 4 * time.Minute
 		if ttl == time.Hour {
 			interval = 50 * time.Minute
@@ -193,7 +202,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 		once.Do(func() {
 			k.mu.Lock()
 			defer k.mu.Unlock()
-			if k.epoch != epoch || !k.enabled {
+			if k.ctx.Err() != nil || k.epoch != epoch || !k.enabled {
 				return
 			}
 			k.busy[id]--
@@ -232,7 +241,7 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 		return
 	}
 	k.mu.Lock()
-	if !k.enabled || k.running || k.replay == nil {
+	if k.ctx.Err() != nil || !k.enabled || k.running || k.replay == nil {
 		k.mu.Unlock()
 		return
 	}
@@ -253,7 +262,7 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 		started := now.Add(k.now().Sub(clockStart))
 		k.mu.Lock()
 		item := k.sessions[id]
-		if !k.enabled || k.epoch != epoch || ctx.Err() != nil {
+		if k.ctx.Err() != nil || !k.enabled || k.epoch != epoch || ctx.Err() != nil {
 			k.mu.Unlock()
 			return
 		}
@@ -262,8 +271,8 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 			continue
 		}
 		if started.Sub(item.anchor) >= item.ttl {
-			k.appendLogLocked(k.sessionLog(id, item, started, "expired"))
 			delete(k.sessions, id)
+			k.appendLogLocked(k.sessionLog(id, item, started, "expired"))
 			k.mu.Unlock()
 			continue
 		}
@@ -281,6 +290,10 @@ func (k *ClaudeCacheKeepalive) ReplayDue(ctx context.Context, now time.Time) {
 		stop()
 		cancel()
 		k.mu.Lock()
+		if k.ctx.Err() != nil || ctx.Err() != nil {
+			k.mu.Unlock()
+			return
+		}
 		if k.sessions[id] == item {
 			item.cancel = nil
 			item.anchor = started

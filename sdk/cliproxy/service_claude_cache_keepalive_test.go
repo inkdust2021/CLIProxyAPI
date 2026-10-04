@@ -124,3 +124,68 @@ func TestServiceClaudeCacheKeepaliveDisabledSessionReload(t *testing.T) {
 		t.Fatal("reload failed to resume valid session")
 	}
 }
+
+func TestServiceClaudeCacheKeepaliveRestoresAfterRestart(t *testing.T) {
+	var mu sync.Mutex
+	var keys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		keys = append(keys, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1000}}`)
+	}))
+	defer server.Close()
+	cfg := &config.Config{AuthDir: t.TempDir(), Claude: internalconfig.ClaudeConfig{CacheKeepalive: true}, DisableClaudeCloakMode: true}
+	newService := func(token string) (*Service, *coreauth.Auth) {
+		t.Helper()
+		manager := coreauth.NewManager(nil, nil, nil)
+		auth := &coreauth.Auth{ID: "original-account", Provider: "claude", Status: coreauth.StatusActive, Attributes: map[string]string{"api_key": token, "base_url": server.URL}}
+		if _, err := manager.Register(context.Background(), auth); err != nil {
+			t.Fatal(err)
+		}
+		s := &Service{cfg: &config.Config{}, coreManager: manager}
+		if !s.applyConfigUpdateWithAuthSynthesis(context.Background(), cfg.CloneForRuntime(), false) {
+			t.Fatal("failed to configure service")
+		}
+		t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+		return s, auth
+	}
+	first, auth := newService("old-token")
+	e, ok := first.coreManager.Executor("claude")
+	if !ok {
+		t.Fatal("Claude executor not registered")
+	}
+	body := []byte(`{"model":"claude-sonnet-5","max_tokens":100,"stream":false,"cache_control":{"type":"ephemeral"},"messages":[{"role":"user","content":"restart continuity"}]}`)
+	if _, err := e.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "claude-sonnet-5", Payload: body}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude}); err != nil {
+		t.Fatal(err)
+	}
+	before := first.claudeCacheKeeper().LogSnapshot()
+	if before.Sessions != 1 {
+		t.Fatal("initial request was not tracked")
+	}
+	if err := first.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := newService("fresh-token")
+	after := second.claudeCacheKeeper().LogSnapshot()
+	if after.Sessions != 1 || after.SessionDetails[0].ID != before.SessionDetails[0].ID || after.SessionDetails[0].LastPrompt != "restart continuity" {
+		t.Fatal("restart lost the original session and prompt")
+	}
+	foundHistory := false
+	for _, event := range after.Events {
+		if event.ID == before.Events[0].ID && event.Time.Equal(before.Events[0].Time) && event.Outcome == before.Events[0].Outcome {
+			foundHistory = true
+		}
+	}
+	if !foundHistory {
+		t.Fatal("restart lost the last tracked event")
+	}
+	second.claudeCacheKeeper().ReplayDue(context.Background(), time.Now().Add(4*time.Minute+time.Second))
+	mu.Lock()
+	defer mu.Unlock()
+	if len(keys) != 2 || keys[1] != "Bearer fresh-token" {
+		t.Fatalf("restored replay did not use current original-account credentials: %v", keys)
+	}
+}
