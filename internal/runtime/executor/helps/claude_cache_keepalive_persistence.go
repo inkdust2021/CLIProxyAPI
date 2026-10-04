@@ -20,7 +20,6 @@ import (
 const (
 	claudeCachePersistenceFile  = ".claude-cache-keepalive.bin"
 	claudeCachePersistenceKey   = ".claude-cache-keepalive.key"
-	claudeCachePersistenceLimit = 48 << 20
 	claudeCachePersistenceMagic = "CCK1"
 )
 
@@ -84,7 +83,7 @@ func (k *ClaudeCacheKeepalive) SetPersistenceDir(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return errClaudeCachePersistence
 	}
-	data, errData := claudeCacheReadFile(filepath.Join(dir, claudeCachePersistenceFile), claudeCachePersistenceLimit)
+	data, errData := os.ReadFile(filepath.Join(dir, claudeCachePersistenceFile))
 	if errData != nil && !errors.Is(errData, os.ErrNotExist) {
 		return errClaudeCachePersistence
 	}
@@ -186,7 +185,7 @@ func claudeCacheRestoreState(state claudeCachePersistedState, now time.Time) (ma
 		}
 		seenIDs[id] = true
 		snapshot := saved.Snapshot
-		if len(snapshot.Body) == 0 || len(snapshot.Body) > claudeCacheMaxBody || snapshot.AuthID == "" || len(snapshot.AuthID) > 4096 || len(snapshot.URL) > 16384 {
+		if len(snapshot.Body) == 0 || snapshot.AuthID == "" || len(snapshot.AuthID) > 4096 || len(snapshot.URL) > 16384 {
 			return nil, errClaudeCachePersistence
 		}
 		parsed, errURL := url.Parse(snapshot.URL)
@@ -235,7 +234,7 @@ func (k *ClaudeCacheKeepalive) savePersistenceLocked() error {
 		state.Sessions = append(state.Sessions, claudeCachePersistedSession{ID: hex.EncodeToString(id[:]), Snapshot: snapshot, Seen: item.seen, Anchor: item.anchor, TTL: item.ttl, Interval: item.interval, Paused: item.paused, Misses: item.misses})
 	}
 	raw, errJSON := json.Marshal(state)
-	if errJSON != nil || len(raw)+len(claudeCachePersistenceMagic)+persistence.aead.NonceSize()+persistence.aead.Overhead() > claudeCachePersistenceLimit {
+	if errJSON != nil {
 		return errClaudeCachePersistence
 	}
 	nonce := make([]byte, persistence.aead.NonceSize())

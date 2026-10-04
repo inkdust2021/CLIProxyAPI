@@ -92,6 +92,47 @@ func newPersistentTestKeeper(t *testing.T, dir string, now *time.Time, replay Cl
 	return k
 }
 
+func TestClaudeCacheKeepalivePersistenceLargeRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bodySize int
+		sessions int
+	}{
+		{"observed long conversation", 4412883, 1},
+		{"snapshot exceeds former file limit", 5 << 20, 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			now := time.Unix(1000000, 0)
+			body := append([]byte(keepaliveTestBody), bytes.Repeat([]byte(" "), tc.bodySize-len(keepaliveTestBody))...)
+			k := newPersistentTestKeeper(t, dir, &now, nil, nil)
+			for i := 0; i < tc.sessions; i++ {
+				k.Begin("a", string(rune('a'+i)), keepaliveTestRequest(t), body)(true)
+			}
+			if k.LogSnapshot().Sessions != tc.sessions {
+				t.Fatal("large successful requests were not tracked")
+			}
+			k.Close()
+			calls := 0
+			restored := newPersistentTestKeeper(t, dir, &now, func(_ context.Context, snapshot ClaudeCacheSnapshot) (int64, error) {
+				calls++
+				if !bytes.Equal(snapshot.Body, body) {
+					t.Fatal("large request was truncated during recovery")
+				}
+				return 123, nil
+			}, nil)
+			if restored.LogSnapshot().Sessions != tc.sessions {
+				t.Fatal("large successful requests were not restored")
+			}
+			now = now.Add(50 * time.Minute)
+			restored.ReplayDue(context.Background(), now)
+			if calls != tc.sessions {
+				t.Fatalf("renewals = %d, want %d", calls, tc.sessions)
+			}
+		})
+	}
+}
+
 func TestClaudeCacheKeepalivePersistencePendingAndLateChat(t *testing.T) {
 	for _, outcome := range []string{"pending", "failed", "late-success"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -317,8 +358,8 @@ func TestClaudeCacheKeepalivePersistenceRejectsInvalidState(t *testing.T) {
 				s.Sessions = append(s.Sessions, s.Sessions[0])
 			}
 		}},
-		{"body capacity", func(s *claudeCachePersistedState) {
-			s.Sessions[0].Snapshot.Body = bytes.Repeat([]byte(" "), claudeCacheMaxBody+1)
+		{"empty body", func(s *claudeCachePersistedState) {
+			s.Sessions[0].Snapshot.Body = nil
 		}},
 		{"ineligible", func(s *claudeCachePersistedState) { s.Sessions[0].Snapshot.Body = []byte(`{"max_tokens":100}`) }},
 		{"ttl", func(s *claudeCachePersistedState) { s.Sessions[0].TTL = 2 * time.Hour }},

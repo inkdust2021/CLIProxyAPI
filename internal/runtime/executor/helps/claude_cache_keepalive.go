@@ -15,10 +15,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const (
-	claudeCacheMaxSessions = 8
-	claudeCacheMaxBody     = 4 << 20
-)
+const claudeCacheMaxSessions = 8
 
 // ClaudeCacheSnapshot holds a final upstream request without access credentials.
 // AuthID pins replay to the original account; credentials are resolved at send time.
@@ -169,7 +166,7 @@ func (k *ClaudeCacheKeepalive) Begin(authID, sessionID string, req *http.Request
 	}
 	id := sha256.Sum256([]byte(authID + "\x00" + req.URL.String() + "\x00" + model + "\x00" + sessionID))
 	ttl := claudeCacheTTL(req.Header, body)
-	eligible := req.Method == http.MethodPost && ttl != 0 && len(body) <= claudeCacheMaxBody
+	eligible := req.Method == http.MethodPost && ttl != 0
 	if !eligible && k.sessions[id] == nil && k.pending[id] == nil {
 		return noop
 	}

@@ -325,10 +325,6 @@ func TestClaudeCacheKeepaliveCloseAndBounds(t *testing.T) {
 	if len(k.sessions) != 8 {
 		t.Fatalf("session cap = %d", len(k.sessions))
 	}
-	k.Begin("a", "oversized", keepaliveTestRequest(t), []byte(strings.Repeat(" ", 4<<20)+keepaliveTestBody))(true)
-	if len(k.sessions) != 8 {
-		t.Fatal("oversized request evicted a usable snapshot")
-	}
 	k.Close()
 	k.SetEnabled(true)
 	k.Begin("a", "closed", keepaliveTestRequest(t), []byte(keepaliveTestBody))(true)

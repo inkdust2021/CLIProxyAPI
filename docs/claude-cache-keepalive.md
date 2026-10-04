@@ -66,8 +66,9 @@ upstream request. Otherwise the existing 5m TTL is used.
 
 ## Bounds and eligibility
 
-- At most 8 account/model/session snapshots are held in memory, each at most
-  4 MiB. The least recently used conversation is replaced when capacity is reached.
+- At most 8 account/model/session snapshots are held in memory. The least recently
+  used conversation is replaced when capacity is reached. Request bodies and the
+  encrypted persistence file have no fixed size limit.
 - Session IDs separate conversations; without one, identity is derived from the
   original account, model, upstream URL, system/tools, and first user message.
 - Successful upstream conversation snapshots are encrypted on disk in the auth
