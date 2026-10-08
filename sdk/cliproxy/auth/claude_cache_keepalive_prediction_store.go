@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const claudeQuotaPredictionFile = ".claude-cache-quota.json"
@@ -44,6 +45,12 @@ func (p *claudeQuotaPredictor) setPersistenceDir(dir string) error {
 	}
 	path := filepath.Join(dir, claudeQuotaPredictionFile)
 	info, errInfo := os.Stat(path)
+	if errors.Is(errInfo, os.ErrNotExist) && strings.HasSuffix(dir, "-state") {
+		legacyPath := filepath.Join(strings.TrimSuffix(dir, "-state"), claudeQuotaPredictionFile)
+		if legacyInfo, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			path, info, errInfo = legacyPath, legacyInfo, nil
+		}
+	}
 	if errors.Is(errInfo, os.ErrNotExist) {
 		return p.saveLocked()
 	}
@@ -64,6 +71,13 @@ func (p *claudeQuotaPredictor) setPersistenceDir(dir string) error {
 		}
 	}
 	p.accounts = state.Accounts
+	if path != filepath.Join(dir, claudeQuotaPredictionFile) {
+		if errMigrate := p.saveLocked(); errMigrate != nil {
+			p.blocked = true
+			return errClaudeQuotaPredictionState
+		}
+		_ = os.Remove(path)
+	}
 	return nil
 }
 

@@ -125,17 +125,21 @@ the observed threshold rule; prediction never invents a quota percentage.
 In-flight chats reserve their estimated work until completion, including the
 end of a stream. Keepalive updates observed utilization without becoming a
 normal-chat workload sample or calibrating an overlapping chat. Forecasts and
-workload samples are saved in `auths/.claude-cache-quota.json` with owner-only
-permissions and restored after restart. The predictor's synchronous snapshot
-write adds disk latency at request completion. Requests elsewhere on the same
-account, upstream rounding, and unexpected chat size can still cross the 1%
-line; this is a conservative forecast, not a hard guarantee.
+workload samples are saved in a separate state directory (by default
+`auths-state/.claude-cache-quota.json`) with owner-only permissions and restored
+after restart. Docker mounts this directory separately from the credential
+directory. Existing `auths/.claude-cache-quota.json` files are migrated on the
+first startup and removed after the new copy is written. The predictor's
+synchronous snapshot write adds disk latency at request completion. Requests
+elsewhere on the same account, upstream rounding, and unexpected chat size can
+still cross the 1% line; this is a conservative forecast, not a hard guarantee.
 
 For an existing installation, `scripts/seed_claude_quota_workload.py` can import
 ordinary token history from the usage-report SQLite database before the first
 predictive run. Stop the service, run the script with the SQLite path, auth
-directory and a new output path, then move its output to
-`auths/.claude-cache-quota.json` before restart. The script opens SQLite
+directory and a new output path, then move its output to the separate state
+directory (for example `auths-state/.claude-cache-quota.json`) before restart.
+The script opens SQLite
 read-only, refuses to overwrite existing predictor state and imports only
 workload samples; historical logs contain no quota-header calibration.
 

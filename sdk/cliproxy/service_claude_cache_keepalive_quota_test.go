@@ -18,6 +18,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
+func TestClaudeQuotaPredictionStateDirIsOutsideAuthDir(t *testing.T) {
+	if got := claudeQuotaPredictionStateDir("/tmp/cli-proxy/auths"); got != "/tmp/cli-proxy/auths-state" {
+		t.Fatalf("state dir = %q", got)
+	}
+	if got := claudeQuotaPredictionStateDir("/root/.cli-proxy-api"); got != "/root/.cli-proxy-api-state" {
+		t.Fatalf("state dir = %q", got)
+	}
+}
+
 func TestServiceClaudeCacheKeepaliveReservedQuotaReplay(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

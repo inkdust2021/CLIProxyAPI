@@ -218,6 +218,36 @@ func TestClaudeQuotaPredictionPersistenceAndIdentity(t *testing.T) {
 	}
 }
 
+func TestClaudeQuotaPredictionMigratesLegacyAuthState(t *testing.T) {
+	now := time.Unix(1791440000, 0)
+	a := reservedClaudeAuth("legacy-prediction", now, nil)
+	parent := t.TempDir()
+	legacyDir := filepath.Join(parent, "auths")
+	stateDir := legacyDir + "-state"
+	p := newClaudeQuotaPredictor()
+	if err := p.setPersistenceDir(legacyDir); err != nil {
+		t.Fatal(err)
+	}
+	trainPrediction(p, a, now, .95, .01)
+	legacyPath := filepath.Join(legacyDir, claudeQuotaPredictionFile)
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatal(err)
+	}
+	fresh := newClaudeQuotaPredictor()
+	if err := fresh.setPersistenceDir(stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.reserved(a, "claude-opus-4-6", now.Add(4*time.Minute)) {
+		t.Fatal("legacy prediction was not migrated")
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, claudeQuotaPredictionFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy prediction still exists, err=%v", err)
+	}
+}
+
 func TestClaudeQuotaPredictionReplayProfileAndManagerEligibility(t *testing.T) {
 	now := time.Now().Truncate(time.Hour).Add(-10 * time.Minute)
 	a := reservedClaudeAuth("prediction", now, nil)

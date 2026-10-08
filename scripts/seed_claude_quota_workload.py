@@ -3,7 +3,8 @@
 
 Run once before first enabling prediction, with the service stopped:
   python3 scripts/seed_claude_quota_workload.py usage-report.sqlite auths seed.json
-Review the output, then move seed.json to auths/.claude-cache-quota.json.
+Review the output, then move seed.json to the separate state directory, for
+example auths-state/.claude-cache-quota.json.
 The SQLite connection is read-only. Output must not already exist. This does not
 merge or overwrite live calibration. Historical logs have no quota headers, so
 every account has empty windows: no utilization, ratios, or synthetic labels.

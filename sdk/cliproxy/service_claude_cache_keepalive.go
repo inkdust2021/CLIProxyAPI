@@ -3,6 +3,7 @@ package cliproxy
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,12 +88,21 @@ func (s *Service) configureClaudeQuotaPredictionPersistence(cfg *config.Config) 
 		}
 		dir = resolved
 	}
+	dir = claudeQuotaPredictionStateDir(dir)
 	if errPersist := s.coreManager.SetClaudeQuotaPredictionPersistence(dir); errPersist != nil {
 		log.Warn("claude quota prediction: persistence unavailable; restart recovery is not guaranteed")
 	}
 }
 
-// configureClaudeCachePersistence keeps recovery state beside persisted credentials.
+func claudeQuotaPredictionStateDir(authDir string) string {
+	authDir = filepath.Clean(strings.TrimSpace(authDir))
+	if authDir == "." || authDir == "" {
+		return ""
+	}
+	return authDir + "-state"
+}
+
+// configureClaudeCachePersistence keeps recovery state beside the configured auth directory.
 func configureClaudeCachePersistence(keeper *helps.ClaudeCacheKeepalive, cfg *config.Config) {
 	dir := ""
 	if cfg != nil && !cfg.Home.Enabled && strings.TrimSpace(cfg.AuthDir) != "" {
