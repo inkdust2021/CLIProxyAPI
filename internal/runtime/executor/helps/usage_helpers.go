@@ -593,6 +593,7 @@ func (r *UsageReporter) publishAttemptRecord(ctx context.Context, record usage.R
 
 func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
 	record.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+	usage.ObserveRecord(ctx, record)
 	usage.PublishRecord(ctx, record)
 }
 
@@ -1164,12 +1165,14 @@ func parseClaudeUsageNode(usageNode gjson.Result) usage.Detail {
 		nonReasoningOutput = 0
 	}
 	detail := usage.Detail{
-		InputTokens:         usageNode.Get("input_tokens").Int(),
-		OutputTokens:        rawOutputTokens,
-		ReasoningTokens:     reasoningTokens,
-		CachedTokens:        cacheReadTokens,
-		CacheReadTokens:     cacheReadTokens,
-		CacheCreationTokens: cacheCreationTokens,
+		InputTokens:           usageNode.Get("input_tokens").Int(),
+		OutputTokens:          rawOutputTokens,
+		ReasoningTokens:       reasoningTokens,
+		CachedTokens:          cacheReadTokens,
+		CacheReadTokens:       cacheReadTokens,
+		CacheCreationTokens:   cacheCreationTokens,
+		CacheCreation5mTokens: usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Int(),
+		CacheCreation1hTokens: usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Int(),
 	}
 	if detail.CachedTokens == 0 {
 		detail.CachedTokens = detail.CacheCreationTokens

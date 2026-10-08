@@ -50,6 +50,9 @@ type authScheduler struct {
 	authGenerations     map[string]scheduledGenerationMeta
 	mixedCursors        map[string]int
 	mixedWeightedStates map[string]*smoothWeightedState
+
+	// selectionEligibility reads trusted runtime policy without changing scheduler state.
+	selectionEligibility func(context.Context, string, cliproxyexecutor.Options) authSelectionEligibility
 }
 
 // providerScheduler stores auth metadata and model shards for a single provider.
@@ -405,7 +408,7 @@ func (s *authScheduler) pickSingleWithStrategy(ctx context.Context, provider, mo
 	providerKey := canonicalSchedulingProvider(provider)
 	modelKey := canonicalModelKey(model)
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
-	eligibility := authSelectionEligibilityForRequest(ctx, opts)
+	eligibility := s.authSelectionEligibilityForRequest(ctx, model, opts)
 	preferWebsocket := cliproxyexecutor.DownstreamWebsocket(ctx) && providerPrefersWebsocketTransport(providerKey) && pinnedAuthID == ""
 
 	s.mu.Lock()
@@ -464,7 +467,7 @@ func (s *authScheduler) pickMixedWithStrategy(ctx context.Context, providers []s
 		return picked, providerKey, nil
 	}
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
-	eligibility := authSelectionEligibilityForRequest(ctx, opts)
+	eligibility := s.authSelectionEligibilityForRequest(ctx, model, opts)
 	modelKey := canonicalModelKey(model)
 
 	s.mu.Lock()

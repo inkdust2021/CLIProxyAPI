@@ -86,8 +86,58 @@ upstream request. Otherwise the existing 5m TTL is used.
 
 An upstream/network error pauses the snapshot immediately; two consecutive
 successful responses without a cache read also pause it. A successful new real
-chat replaces and resumes that session. This feature does not block ordinary
-chats or reserve a global quota slice.
+chat replaces and resumes that session. The separate quota-reserve switch below
+controls whether ordinary chats can use the last 1% of a Claude OAuth account.
+
+## Reserve Claude quota for keepalive
+
+In **Configuration → Advanced → Claude**, enable **Reserve 1% quota for
+keepalive** after enabling keepalive, or set:
+
+```yaml
+oauth:
+  providers:
+    claude:
+      cache-keepalive: true
+      cache-keepalive-reserve-quota: true
+```
+
+The reserve switch is off by default. With it on, ordinary chats skip a Claude
+OAuth account when either the observed 5-hour or weekly utilization is at least
+99%. Keepalive may still use the original account's remainder; real upstream
+cooldowns and disabled credentials still apply. A valid reset releases the
+reservation. The filter applies to normal, mixed-provider, pinned, affinity,
+and plugin credential selection. It has no effect in Home mode or on API keys.
+
+The service also estimates whether the next ordinary request would cross 99%.
+For each account and model, it keeps the last 32 ordinary request workloads and
+uses an upper sample. Input, output, cache reads and cache writes contribute
+using [Anthropic API pricing ratios](https://platform.claude.com/docs/en/about-claude/pricing)
+as a workload prior: output costs 5x input for supported models, 5-minute
+writes 1.25x, 1-hour writes 2x, and cache reads normally 0.1x (0.05x for
+Opus/Sonnet 5.5). Unknown historical cache-write TTL uses the conservative 2x
+weight. The service learns the conversion from workload to quota utilization
+only after at least three positive changes in actual upstream quota headers
+within the same reset window. API prices alone do not determine a subscription
+account's 5-hour or weekly allowance. Missing or stale quota data leaves only
+the observed threshold rule; prediction never invents a quota percentage.
+
+In-flight chats reserve their estimated work until completion, including the
+end of a stream. Keepalive updates observed utilization without becoming a
+normal-chat workload sample or calibrating an overlapping chat. Forecasts and
+workload samples are saved in `auths/.claude-cache-quota.json` with owner-only
+permissions and restored after restart. The predictor's synchronous snapshot
+write adds disk latency at request completion. Requests elsewhere on the same
+account, upstream rounding, and unexpected chat size can still cross the 1%
+line; this is a conservative forecast, not a hard guarantee.
+
+For an existing installation, `scripts/seed_claude_quota_workload.py` can import
+ordinary token history from the usage-report SQLite database before the first
+predictive run. Stop the service, run the script with the SQLite path, auth
+directory and a new output path, then move its output to
+`auths/.claude-cache-quota.json` before restart. The script opens SQLite
+read-only, refuses to overwrite existing predictor state and imports only
+workload samples; historical logs contain no quota-header calibration.
 
 ## Manage individual sessions
 

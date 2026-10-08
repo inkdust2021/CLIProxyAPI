@@ -967,6 +967,10 @@ oauth:
       # 5m caches renew every 4m; 1h caches every 50m. Cache reads remain billable.
       # Defaults to false and supports hot reload. See docs/claude-cache-keepalive.md.
       cache-keepalive: false
+      # When either observed shared 5h or weekly quota has <=1% remaining, skip this OAuth
+      # account for ordinary requests and retain it for cache replay. Requires keepalive;
+      # unavailable with Home. Uses latest upstream observations, so exact headroom is not guaranteed.
+      cache-keepalive-reserve-quota: false
       # Managed per-session renewal exclusions. Only opaque IDs are saved.
       cache-keepalive-disabled-sessions: []
 

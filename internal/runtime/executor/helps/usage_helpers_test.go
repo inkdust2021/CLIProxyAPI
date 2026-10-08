@@ -51,6 +51,24 @@ func TestParseOpenAIUsageChatCompletions(t *testing.T) {
 	}
 }
 
+func TestClaudeQuotaUsageRetainsCacheWriteTTLAndObservesSynchronously(t *testing.T) {
+	detail := ParseClaudeUsage([]byte(`{"usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":30,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":20}}}`))
+	merged := MergeStreamUsageDetail(detail, usage.Detail{OutputTokens: 20})
+	if merged.CacheCreation5mTokens != 10 || merged.CacheCreation1hTokens != 20 || merged.CacheCreationTokens != 30 {
+		t.Fatalf("stream lost cache TTL buckets: %+v", merged)
+	}
+	ctx := logging.WithFreshResponseHeadersHolder(context.Background())
+	logging.SetResponseHeaders(ctx, http.Header{"Anthropic-Ratelimit-Unified-5h-Utilization": {"0.98"}})
+	observed := false
+	ctx = usage.WithRecordObserver(ctx, func(_ context.Context, record usage.Record) {
+		observed = record.Detail.CacheCreation5mTokens == 10 && record.ResponseHeaders.Get("Anthropic-Ratelimit-Unified-5h-Utilization") == "0.98"
+	})
+	NewUsageReporter(ctx, "claude", "claude-opus-4-6", nil).publishRecord(ctx, usage.Record{Detail: merged})
+	if !observed {
+		t.Fatal("usage observer did not receive token detail and trusted headers before return")
+	}
+}
+
 func TestParseOpenAIUsageResponses(t *testing.T) {
 	data := []byte(`{"service_tier":"default","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":7},"output_tokens_details":{"reasoning_tokens":9}}}`)
 	detail := ParseOpenAIUsage(data)

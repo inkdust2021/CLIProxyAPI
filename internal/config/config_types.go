@@ -117,6 +117,9 @@ type ClaudeConfig struct {
 	// Disabled by default; conversation snapshots are held only in memory.
 	CacheKeepalive bool `yaml:"cache-keepalive" json:"cache-keepalive"`
 
+	// CacheKeepaliveReserveQuota reserves the last observed 1% of shared OAuth quota for cache replay.
+	CacheKeepaliveReserveQuota bool `yaml:"cache-keepalive-reserve-quota" json:"cache-keepalive-reserve-quota"`
+
 	// CacheKeepaliveDisabledSessions persists only opaque IDs, never prompts.
 	CacheKeepaliveDisabledSessions []string `yaml:"cache-keepalive-disabled-sessions" json:"cache-keepalive-disabled-sessions"`
 

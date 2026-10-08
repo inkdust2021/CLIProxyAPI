@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
@@ -28,6 +29,7 @@ func (s *Service) claudeCacheKeeper() *helps.ClaudeCacheKeepalive {
 			s.claudeCache.SetDisabledSessions(cfg.Claude.CacheKeepaliveDisabledSessions)
 		}
 		configureClaudeCachePersistence(s.claudeCache, cfg)
+		s.configureClaudeQuotaPredictionPersistence(cfg)
 	}
 	return s.claudeCache
 }
@@ -43,6 +45,7 @@ func (s *Service) configureClaudeCacheKeepalive(cfg *config.Config) {
 	}
 	keeper.SetDisabledSessions(disabled)
 	configureClaudeCachePersistence(keeper, cfg)
+	s.configureClaudeQuotaPredictionPersistence(cfg)
 }
 
 func (s *Service) replayClaudeCache(ctx context.Context, snapshot helps.ClaudeCacheSnapshot) (int64, error) {
@@ -67,7 +70,26 @@ func (s *Service) replayClaudeCache(ctx context.Context, snapshot helps.ClaudeCa
 	if !ok {
 		return 0, fmt.Errorf("claude cache keepalive: executor does not support snapshot replay")
 	}
-	return claude.ReplayCache(ctx, auth, snapshot)
+	ctx = logging.WithFreshResponseHeadersHolder(ctx)
+	return claude.ReplayCache(s.coreManager.WithClaudeQuotaObservation(ctx), auth, snapshot)
+}
+
+func (s *Service) configureClaudeQuotaPredictionPersistence(cfg *config.Config) {
+	if s.coreManager == nil {
+		return
+	}
+	dir := ""
+	if cfg != nil && !cfg.Home.Enabled && cfg.Claude.CacheKeepaliveReserveQuota && strings.TrimSpace(cfg.AuthDir) != "" {
+		resolved, errResolve := util.ResolveAuthDir(cfg.AuthDir)
+		if errResolve != nil {
+			log.Warn("claude quota prediction: could not resolve persistence directory")
+			return
+		}
+		dir = resolved
+	}
+	if errPersist := s.coreManager.SetClaudeQuotaPredictionPersistence(dir); errPersist != nil {
+		log.Warn("claude quota prediction: persistence unavailable; restart recovery is not guaranteed")
+	}
 }
 
 // configureClaudeCachePersistence keeps recovery state beside persisted credentials.

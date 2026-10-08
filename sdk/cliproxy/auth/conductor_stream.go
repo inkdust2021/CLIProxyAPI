@@ -125,6 +125,11 @@ func (m *Manager) wrapStreamResult(ctx context.Context, auth *Auth, provider, re
 	streamStart := time.Now()
 	go func() {
 		defer close(out)
+		if ctx != nil {
+			if finish, ok := ctx.Value(claudeQuotaReleaseContextKey{}).(func()); ok && finish != nil {
+				defer finish()
+			}
+		}
 		var failed bool
 		forward := true
 		var rewriter *StreamRewriter
@@ -211,6 +216,17 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 	}
 	executor = executorForAuth(executor, auth)
 	ctx = contextWithRequestedModelAlias(ctx, opts, routeModel)
+	finishQuota, quotaAllowed := m.beginClaudeQuotaAttempt(auth, m.selectionModelKeyForAuth(auth, routeModel))
+	if !quotaAllowed {
+		return nil, &Error{Code: "auth_not_found", Message: "credential reserved for cache keepalive"}
+	}
+	handedOffQuota := false
+	defer func() {
+		if !handedOffQuota {
+			finishQuota()
+		}
+	}()
+	ctx = context.WithValue(ctx, claudeQuotaReleaseContextKey{}, finishQuota)
 	var lastErr error
 	var upstreamErr error
 	didRefreshOnUnauthorized := false
@@ -455,6 +471,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			remaining = closedCh
 		}
 		attemptAliasResult := resolveAttemptAliasResult(routing, auth, routeModel, execModel, aliasResult)
+		handedOffQuota = true
 		return m.wrapStreamResult(ctx, auth.Clone(), provider, resultModel, routeModel, streamResult.Headers, buffered, remaining, attemptAliasResult, ephemeralResult, execOpts), nil
 	}
 	if lastErr == nil {
