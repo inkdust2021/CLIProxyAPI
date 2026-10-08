@@ -57,19 +57,21 @@ func TestManagementV8RoutesShareAccessControl(t *testing.T) {
 					t.Fatalf("%s: status=%d want=%d body=%s", route, recorder.Code, tc.want, recorder.Body.String())
 				}
 			}
-			req := httptest.NewRequest(http.MethodPatch, "/v8/management/observability/claude-cache-keepalive/sessions/"+strings.Repeat("a", 64), strings.NewReader(`{"enabled":false}`))
-			req.RemoteAddr = "[::1]:1234"
-			if tc.authorized {
-				req.Header.Set("Authorization", "Bearer test-password")
-			}
-			w := httptest.NewRecorder()
-			s.engine.ServeHTTP(w, req)
-			want := tc.want
-			if want == 200 {
-				want = 503
-			}
-			if w.Code != want {
-				t.Fatalf("session mutation access control: %d want %d", w.Code, want)
+			for _, method := range []string{http.MethodPatch, http.MethodDelete} {
+				req := httptest.NewRequest(method, "/v8/management/observability/claude-cache-keepalive/sessions/"+strings.Repeat("a", 64), strings.NewReader(`{"enabled":false}`))
+				req.RemoteAddr = "[::1]:1234"
+				if tc.authorized {
+					req.Header.Set("Authorization", "Bearer test-password")
+				}
+				w := httptest.NewRecorder()
+				s.engine.ServeHTTP(w, req)
+				want := tc.want
+				if want == 200 {
+					want = 503
+				}
+				if w.Code != want {
+					t.Fatalf("%s session mutation access control: %d want %d", method, w.Code, want)
+				}
 			}
 		})
 	}
@@ -101,6 +103,7 @@ func TestManagementV8IndependentContract(t *testing.T) {
 	}
 	for _, route := range []string{
 		"GET /v0/management/debug", "PUT /v0/management/request-retry", "GET /v0/management/auth-files",
+		"DELETE /v8/management/observability/claude-cache-keepalive/sessions/:id",
 		"GET /v8/management/observability/logs", "GET /v8/management/observability/usage/queue",
 		"GET /v8/management/credentials", "POST /v8/management/credentials",
 		"GET /v8/management/oauth/auth-url", "POST /v8/management/oauth/import", "POST /v8/management/oauth/callback",

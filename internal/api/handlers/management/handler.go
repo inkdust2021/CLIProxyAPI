@@ -196,7 +196,7 @@ func (h *Handler) reloadConfigAfterManagementSave(ctx context.Context, snapshot 
 	defer h.reloadMu.Unlock()
 
 	h.mu.Lock()
-	if snapshot.generation < h.appliedReloadGeneration {
+	if snapshot.generation < h.reloadGeneration || snapshot.generation < h.appliedReloadGeneration {
 		h.mu.Unlock()
 		return
 	}

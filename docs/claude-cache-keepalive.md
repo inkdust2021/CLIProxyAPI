@@ -93,8 +93,8 @@ chats or reserve a global quota slice.
 
 Open **Logs → Claude keepalive** to see current sessions above the event history.
 Each account/model/session has one row with its model, hashed identity, last user
-prompt, state, last chat time, next renewal time, and an individual keepalive
-switch. Search current sessions by prompt, model, or identity. Event history has
+prompt, state, last chat time, next renewal time, an individual keepalive
+switch, and a delete action. Search current sessions by prompt, model, or identity. Event history has
 its own search and outcome filters.
 
 Switching a session off cancels its active replay and saves the preference
@@ -118,6 +118,20 @@ from encrypted successful snapshots after restart.
 authentication. Unknown identities return 404, invalid IDs/bodies return 400,
 and failed config saves leave the preference unchanged. Manual switch events
 contain no prompts.
+
+`DELETE /v8/management/observability/claude-cache-keepalive/sessions/:id` removes
+that session's successful snapshot, invalidates pending chat completions, cancels
+its renewal, and clears its disabled preference. Disabled-only rows can also be
+deleted. Deletion preserves event history, chat history, and authentication files.
+A future successful eligible chat can create a new active snapshot for the same
+identity. Deleted snapshots stay removed after restart.
+
+The endpoint accepts lowercase 64-character hexadecimal IDs and returns
+`{"status":"ok"}` on success. Invalid IDs return 400, unknown identities return
+404, and an unavailable keeper/configuration returns 503. Configuration or
+snapshot persistence failures return 500 and retain the session; unreadable
+recovery files also block deletion. Failed snapshot saves restore the disabled
+preference, and a failed preference rollback is reported explicitly.
 
 ## Restart recovery
 

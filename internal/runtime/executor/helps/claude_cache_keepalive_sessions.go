@@ -135,3 +135,44 @@ func (k *ClaudeCacheKeepalive) SetDisabledSessions(ids []string) {
 	k.disabled = next
 	k.persistLocked()
 }
+
+// DeleteSession removes a snapshot and its preference without removing event history.
+// Pending completions are invalidated, but their in-flight counts remain until they finish.
+func (k *ClaudeCacheKeepalive) DeleteSession(key string) (bool, error) {
+	if k == nil {
+		return false, nil
+	}
+	decoded, err := hex.DecodeString(key)
+	if err != nil || len(decoded) != 32 || key != strings.ToLower(key) {
+		return false, nil
+	}
+	id := [32]byte(decoded)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.ctx.Err() != nil || (k.persistence != nil && k.persistence.blocked) {
+		return false, errClaudeCachePersistence
+	}
+	item, pending, disabled := k.sessions[id], k.pending[id], k.disabled[key]
+	if item == nil && pending == nil && !disabled {
+		return false, nil
+	}
+	delete(k.sessions, id)
+	delete(k.pending, id)
+	delete(k.disabled, key)
+	if errSave := k.savePersistenceLocked(); errSave != nil {
+		if item != nil {
+			k.sessions[id] = item
+		}
+		if pending != nil {
+			k.pending[id] = pending
+		}
+		if disabled {
+			k.disabled[key] = true
+		}
+		return false, errSave
+	}
+	if item != nil && item.cancel != nil {
+		item.cancel()
+	}
+	return true, nil
+}

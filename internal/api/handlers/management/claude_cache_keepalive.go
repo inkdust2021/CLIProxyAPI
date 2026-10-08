@@ -73,3 +73,59 @@ func (h *Handler) PatchClaudeCacheKeepaliveSession(c *gin.Context) {
 	h.reloadConfigAfterManagementSaveAsync(c.Request.Context(), snapshot)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
+
+func (h *Handler) DeleteClaudeCacheKeepaliveSession(c *gin.Context) {
+	id := c.Param("id")
+	decoded, err := hex.DecodeString(id)
+	if err != nil || len(decoded) != 32 || id != strings.ToLower(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session ID"})
+		return
+	}
+	// Finish older reloads before deleting preferences they could restore.
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	keeper := h.claudeCacheKeepalive
+	if keeper == nil || h.cfg == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "keepalive unavailable"})
+		return
+	}
+	previous := h.cfg.Claude.CacheKeepaliveDisabledSessions
+	next := make([]string, 0, len(previous))
+	for _, key := range previous {
+		if !strings.EqualFold(key, id) {
+			next = append(next, key)
+		}
+	}
+	changed := len(next) != len(previous)
+	if changed {
+		h.cfg.Claude.CacheKeepaliveDisabledSessions = next
+		if errSave := config.SaveConfigPreserveComments(h.configFilePath, h.cfg, true); errSave != nil {
+			h.cfg.Claude.CacheKeepaliveDisabledSessions = previous
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save session preference"})
+			return
+		}
+	}
+	deleted, errDelete := keeper.DeleteSession(id)
+	if errDelete != nil {
+		if changed {
+			h.cfg.Claude.CacheKeepaliveDisabledSessions = previous
+			if errRestore := config.SaveConfigPreserveComments(h.configFilePath, h.cfg, true); errRestore != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete session and restore session preference"})
+				return
+			}
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save session deletion"})
+		return
+	}
+	if !deleted && !changed {
+		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	if changed {
+		snapshot := h.reloadSnapshotConfigLocked()
+		h.reloadConfigAfterManagementSaveAsync(c.Request.Context(), snapshot)
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
