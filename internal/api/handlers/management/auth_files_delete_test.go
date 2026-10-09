@@ -98,6 +98,34 @@ func TestDeleteAuthFile_UsesAuthPathFromManager(t *testing.T) {
 	}
 }
 
+func TestDeleteAuthFileAllPreservesHiddenStateJSON(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"claude.json":              `{"type":"claude"}`,
+		".claude-cache-quota.json": `{"version":1}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, coreauth.NewManager(nil, nil, nil))
+	h.tokenStore = &memoryAuthStore{}
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodDelete, "/v8/management/credentials?all=true", nil)
+	h.DeleteAuthFile(ctx)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude-cache-quota.json")); err != nil {
+		t.Fatalf("hidden state was deleted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude.json")); !os.IsNotExist(err) {
+		t.Fatalf("credential was not deleted: %v", err)
+	}
+}
+
 func TestDeleteAuthFile_FallbackToAuthDirPath(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 

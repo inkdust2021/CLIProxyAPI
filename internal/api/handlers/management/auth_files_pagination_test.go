@@ -60,6 +60,62 @@ func TestListAuthFilesPaginationFromDisk(t *testing.T) {
 	}
 }
 
+func TestListAuthFilesFromDiskSkipsHiddenStateJSON(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"claude.json":              `{"type":"claude"}`,
+		".claude-cache-quota.json": `{"version":1,"accounts":{}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, nil)
+	payload := requestAuthFilesPage(t, handler, "/v8/management/credentials?page_size=10")
+	if payload.Total != 1 || !equalStrings(authFileNames(payload.Files), []string{"claude.json"}) {
+		t.Fatalf("credential list = %#v, want only claude.json", payload)
+	}
+}
+
+func TestListAuthFilesFromManagerSkipsHiddenStateJSON(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	dir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	for _, name := range []string{"claude.json", ".claude-cache-quota.json"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(`{"type":"claude"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := manager.Register(context.Background(), &coreauth.Auth{
+			ID: name, FileName: name, Provider: "claude", Status: coreauth.StatusActive,
+			Attributes: map[string]string{"path": path},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, manager)
+	for _, requestPath := range []string{
+		"/v8/management/credentials?page_size=10",
+		"/v8/management/credentials",
+	} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodGet, requestPath, nil)
+		handler.ListAuthFiles(ctx)
+		var payload struct {
+			Files []map[string]any `json:"files"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if !equalStrings(authFileNames(payload.Files), []string{"claude.json"}) {
+			t.Fatalf("%s credential list = %#v, want only claude.json", requestPath, payload.Files)
+		}
+	}
+}
+
 func TestListAuthFilesPaginationAppliesLookupFiltersBeforePaging(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 

@@ -262,7 +262,7 @@ func compareAuthFileListOrder(left, right *coreauth.Auth) int {
 }
 
 func isAuthFileListable(auth *coreauth.Auth) bool {
-	if auth == nil {
+	if auth == nil || isHiddenAuthFile(auth) {
 		return false
 	}
 	runtimeOnly := isRuntimeOnlyAuth(auth)
@@ -278,6 +278,14 @@ func isAuthFileListable(auth *coreauth.Auth) bool {
 		return false
 	}
 	return true
+}
+
+func isHiddenAuthFile(auth *coreauth.Auth) bool {
+	name := strings.TrimSpace(auth.FileName)
+	if name == "" {
+		name = strings.TrimSpace(auth.ID)
+	}
+	return name != "" && strings.HasPrefix(filepath.Base(name), ".")
 }
 
 func lockedAuthIndex(auth *coreauth.Auth) string {
@@ -397,6 +405,9 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context, pagination authFilesPagi
 			continue
 		}
 		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 		if nameFilter != "" && name != nameFilter {
 			continue
 		}
@@ -635,7 +646,7 @@ func reconcileAuthFileCooldownState(auth *coreauth.Auth, now time.Time) (unavail
 }
 
 func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported ...map[string]struct{}) gin.H {
-	if auth == nil {
+	if auth == nil || isHiddenAuthFile(auth) {
 		return nil
 	}
 	auth.EnsureIndex()
@@ -980,6 +991,9 @@ func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {
 
 func isUnsafeAuthFileName(name string) bool {
 	if strings.TrimSpace(name) == "" {
+		return true
+	}
+	if strings.HasPrefix(name, ".") {
 		return true
 	}
 	if strings.ContainsAny(name, "/\\") {

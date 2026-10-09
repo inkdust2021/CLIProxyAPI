@@ -147,7 +147,7 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
 				continue
 			}
 			name := e.Name()
-			if !strings.HasSuffix(strings.ToLower(name), ".json") {
+			if isUnsafeAuthFileName(name) || !strings.HasSuffix(strings.ToLower(name), ".json") {
 				continue
 			}
 			full := filepath.Join(h.cfg.AuthDir, name)
@@ -259,6 +259,9 @@ func (h *Handler) storeUploadedAuthFile(ctx context.Context, file *multipart.Fil
 }
 
 func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) error {
+	if isUnsafeAuthFileName(name) {
+		return fmt.Errorf("invalid name")
+	}
 	dst := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
 	if !filepath.IsAbs(dst) {
 		if abs, errAbs := filepath.Abs(dst); errAbs == nil {

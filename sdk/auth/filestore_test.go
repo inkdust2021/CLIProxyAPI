@@ -87,6 +87,27 @@ func TestExtractAccessToken(t *testing.T) {
 	}
 }
 
+func TestFileTokenStoreListSkipsHiddenStateJSON(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"claude.json":              `{"type":"claude","access_token":"test"}`,
+		".claude-cache-quota.json": `{"version":1,"accounts":{}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := NewFileTokenStore()
+	store.SetBaseDir(dir)
+	files, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].FileName != "claude.json" {
+		t.Fatalf("auth files = %#v, want only claude.json", files)
+	}
+}
+
 func TestFileTokenStoreSaveExistingMetadataSetsFileAttributes(t *testing.T) {
 	tests := []struct {
 		name          string

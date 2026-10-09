@@ -58,3 +58,20 @@ func TestDownloadAuthFile_RejectsPathSeparators(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadAuthFile_RejectsHiddenStateJSON(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	dir := t.TempDir()
+	name := ".claude-cache-quota.json"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"version":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, nil)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v8/management/credentials/download?name="+url.QueryEscape(name), nil)
+	h.DownloadAuthFile(ctx)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}

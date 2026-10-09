@@ -7,12 +7,32 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
+
+func TestWriteAuthFileRejectsHiddenStateJSON(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude-cache-quota.json")
+	original := []byte(`{"version":1}`)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: dir}, coreauth.NewManager(nil, nil, nil))
+	if err := h.writeAuthFile(context.Background(), filepath.Base(path), []byte(`{"type":"claude"}`)); err == nil {
+		t.Fatal("hidden state was accepted as a credential upload")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("hidden state changed: data=%q err=%v", data, err)
+	}
+}
 
 func TestUploadAuthFile_PreservesPriorityAttributes(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
