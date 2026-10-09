@@ -118,9 +118,12 @@ writes 1.25x, 1-hour writes 2x, and cache reads normally 0.1x (0.05x for
 Opus/Sonnet 5.5). Unknown historical cache-write TTL uses the conservative 2x
 weight. The service learns the conversion from workload to quota utilization
 only after at least three positive changes in actual upstream quota headers
-within the same reset window. API prices alone do not determine a subscription
-account's 5-hour or weekly allowance. Missing or stale quota data leaves only
-the observed threshold rule; prediction never invents a quota percentage.
+within the same reset window. The conversion uses the upper sample of the last
+eight calibrated ratios, capped at twice their median so one rounded-header
+spike cannot dominate the forecast. API prices alone do not determine a
+subscription account's 5-hour or weekly allowance. Missing or stale quota data
+leaves only the observed threshold rule; prediction never invents a quota
+percentage.
 
 In-flight chats reserve their estimated work until completion, including the
 end of a stream. Keepalive updates observed utilization without becoming a
@@ -153,7 +156,9 @@ the forecast was too high. Samples are saved in `.claude-cache-quota.json` and
 survive a restart. Only ordinary, serial requests with a usable token count,
 unchanged reset window, and at least three earlier calibration samples are
 measured. Keepalive replays and ambiguous observations are excluded. Existing
-historical quota readings cannot be scored retroactively.
+historical quota readings cannot be scored retroactively. New samples identify
+the capped estimator as `capped-p90-v1`; older samples have no estimator label,
+so the aggregate summary includes both versions until old samples age out.
 
 ## Manage individual sessions
 

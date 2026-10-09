@@ -53,6 +53,7 @@ type ClaudeQuotaPredictionEvaluation struct {
 	AccountKey           string    `json:"account_key"`
 	Window               string    `json:"window"`
 	Model                string    `json:"model"`
+	Estimator            string    `json:"estimator,omitempty"`
 	ObservedAt           time.Time `json:"observed_at"`
 	Reset                time.Time `json:"reset"`
 	BeforeUtilization    float64   `json:"before_utilization"`
@@ -148,6 +149,21 @@ func claudeQuotaUpperSample(samples []float64) float64 {
 	values := append([]float64(nil), samples...)
 	sort.Float64s(values)
 	return values[int(math.Ceil(.9*float64(len(values))))-1]
+}
+
+// Cap an isolated rounded-header spike while retaining the upper estimate for stable ratios.
+func claudeQuotaUpperRatio(samples []float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	values := append([]float64(nil), samples...)
+	sort.Float64s(values)
+	upper := values[int(math.Ceil(.9*float64(len(values))))-1]
+	median := values[len(values)/2]
+	if len(values)%2 == 0 {
+		median = values[len(values)/2-1]/2 + median/2
+	}
+	return math.Min(upper, 2*median)
 }
 
 func (p *claudeQuotaPredictor) accountLocked(key string) *claudeQuotaAccount {
@@ -251,10 +267,10 @@ func (p *claudeQuotaPredictor) observe(auth *Auth, record usage.Record) {
 		}
 		delta := utilization - window.Utilization
 		if serial && window.paired && workOK && usage.GenerateEnabled(record.Generate) && delta > 0 && predictedWork > 0 && len(window.Ratios) >= 3 {
-			forecast := window.Utilization + claudeQuotaUpperSample(window.Ratios)*(window.PendingWork+predictedWork)
+			forecast := window.Utilization + claudeQuotaUpperRatio(window.Ratios)*(window.PendingWork+predictedWork)
 			if !math.IsNaN(forecast) && !math.IsInf(forecast, 0) {
 				p.evaluations = append(p.evaluations, ClaudeQuotaPredictionEvaluation{
-					AccountKey: accountKey, Window: name, Model: canonicalClaudeQuotaModel(model),
+					AccountKey: accountKey, Window: name, Model: canonicalClaudeQuotaModel(model), Estimator: "capped-p90-v1",
 					ObservedAt: at, Reset: reset, BeforeUtilization: window.Utilization,
 					PredictedUtilization: forecast, ActualUtilization: utilization,
 					PredictedWork: predictedWork, ActualWork: work, CalibrationSamples: len(window.Ratios),
@@ -321,7 +337,7 @@ func (p *claudeQuotaPredictor) reservedLocked(account *claudeQuotaAccount, model
 		if window.Utilization >= .99 {
 			return true
 		}
-		if work > 0 && len(window.Ratios) >= 3 && window.Utilization+claudeQuotaUpperSample(window.Ratios)*(window.PendingWork+account.activeWork+work) >= .99 {
+		if work > 0 && len(window.Ratios) >= 3 && window.Utilization+claudeQuotaUpperRatio(window.Ratios)*(window.PendingWork+account.activeWork+work) >= .99 {
 			return true
 		}
 	}

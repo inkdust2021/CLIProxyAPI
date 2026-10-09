@@ -107,6 +107,44 @@ func TestClaudeQuotaPredictionCalibratesCurrentRequest(t *testing.T) {
 	}
 }
 
+func TestClaudeQuotaPredictionCapsIsolatedCalibrationSpike(t *testing.T) {
+	now := time.Unix(1791440000, 0)
+	a := reservedClaudeAuth("prediction-spike", now, nil)
+	p := newClaudeQuotaPredictor()
+	p.accounts[claudeQuotaAccountKey(a)] = &claudeQuotaAccount{
+		Profiles: map[string]*claudeQuotaProfile{"claude-opus-4-6": {Work: []float64{1000}}},
+		Windows: map[string]*claudeQuotaWindow{"5h": {
+			Utilization: .95, Reset: now.Add(4 * time.Hour), ObservedAt: now,
+			Ratios: []float64{.00001, .00001, .00001, .0001}, paired: true,
+		}},
+	}
+	if p.reserved(a, "claude-opus-4-6", now.Add(time.Minute)) {
+		t.Fatal("one isolated high ratio reserved far more than the final 1%")
+	}
+	record := predictionRecord(a.ID, now.Add(time.Minute), .96)
+	record.ResponseHeaders.Set("Anthropic-Ratelimit-Unified-5h-Reset", fmt.Sprint(now.Add(4*time.Hour).Unix()))
+	p.observe(a, record)
+	if len(p.evaluations) != 1 || math.Abs(p.evaluations[0].PredictedUtilization-.97) > 1e-9 || p.evaluations[0].Estimator != "capped-p90-v1" {
+		t.Fatalf("forecast still amplified the isolated spike: %+v", p.evaluations)
+	}
+}
+
+func TestClaudeQuotaPredictionRetainsRepeatedHighCalibration(t *testing.T) {
+	now := time.Unix(1791440000, 0)
+	a := reservedClaudeAuth("prediction-high-ratios", now, nil)
+	p := newClaudeQuotaPredictor()
+	p.accounts[claudeQuotaAccountKey(a)] = &claudeQuotaAccount{
+		Profiles: map[string]*claudeQuotaProfile{"claude-opus-4-6": {Work: []float64{1000}}},
+		Windows: map[string]*claudeQuotaWindow{"5h": {
+			Utilization: .95, Reset: now.Add(4 * time.Hour), ObservedAt: now,
+			Ratios: []float64{.00001, .0001, .0001, .0001}, paired: true,
+		}},
+	}
+	if !p.reserved(a, "claude-opus-4-6", now.Add(time.Minute)) {
+		t.Fatal("repeated high ratios failed to protect the final 1%")
+	}
+}
+
 func TestClaudeQuotaPredictionRecordsHoldoutErrorAcrossRestart(t *testing.T) {
 	now := time.Unix(1791440000, 0)
 	a := reservedClaudeAuth("prediction-evaluation", now, nil)
