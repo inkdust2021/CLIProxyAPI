@@ -107,6 +107,43 @@ func TestClaudeQuotaPredictionCalibratesCurrentRequest(t *testing.T) {
 	}
 }
 
+func TestClaudeQuotaPredictionRecordsHoldoutErrorAcrossRestart(t *testing.T) {
+	now := time.Unix(1791440000, 0)
+	a := reservedClaudeAuth("prediction-evaluation", now, nil)
+	dir := t.TempDir()
+	p := newClaudeQuotaPredictor()
+	if err := p.setPersistenceDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	trainPrediction(p, a, now, .90, .01)
+	if len(p.evaluations) != 0 {
+		t.Fatal("recorded an error before three calibration samples existed")
+	}
+	p.observe(a, predictionRecord(a.ID, now.Add(4*time.Minute), .95))
+	if len(p.evaluations) != 1 {
+		t.Fatalf("evaluation count = %d, want 1", len(p.evaluations))
+	}
+	got := p.evaluations[0]
+	if got.Window != "5h" || got.Model != "claude-opus-4-6" || got.CalibrationSamples != 3 ||
+		math.Abs(got.BeforeUtilization-.93) > 1e-9 || math.Abs(got.PredictedUtilization-.94) > 1e-9 ||
+		math.Abs(got.ActualUtilization-.95) > 1e-9 || got.PredictedWork != 1000 || got.ActualWork != 1000 {
+		t.Fatalf("evaluation = %+v", got)
+	}
+	fresh := newClaudeQuotaPredictor()
+	if err := fresh.setPersistenceDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh.evaluations) != 1 || fresh.evaluations[0] != got {
+		t.Fatalf("evaluation changed after restart: %+v", fresh.evaluations)
+	}
+	replay := predictionRecord(a.ID, now.Add(5*time.Minute), .96)
+	replay.Source = "claude-cache-keepalive"
+	fresh.observe(a, replay)
+	if len(fresh.evaluations) != 1 {
+		t.Fatal("keepalive contaminated forecast error history")
+	}
+}
+
 func TestClaudeQuotaPredictionResetMalformedAndOld(t *testing.T) {
 	now := time.Unix(1791440000, 0)
 	a := reservedClaudeAuth("prediction", now, nil)

@@ -13,8 +13,9 @@ import (
 const claudeQuotaPredictionFile = ".claude-cache-quota.json"
 
 type claudeQuotaPersistedState struct {
-	Version  int                            `json:"version"`
-	Accounts map[string]*claudeQuotaAccount `json:"accounts"`
+	Version     int                               `json:"version"`
+	Accounts    map[string]*claudeQuotaAccount    `json:"accounts"`
+	Evaluations []ClaudeQuotaPredictionEvaluation `json:"evaluations,omitempty"`
 }
 
 var errClaudeQuotaPredictionState = errors.New("claude quota prediction state unavailable or invalid")
@@ -63,6 +64,7 @@ func (p *claudeQuotaPredictor) setPersistenceDir(dir string) error {
 	if errRead != nil || json.Unmarshal(data, &state) != nil || !validClaudeQuotaState(state) {
 		p.blocked = true
 		p.accounts = make(map[string]*claudeQuotaAccount)
+		p.evaluations = nil
 		return errClaudeQuotaPredictionState
 	}
 	for _, account := range state.Accounts {
@@ -71,6 +73,7 @@ func (p *claudeQuotaPredictor) setPersistenceDir(dir string) error {
 		}
 	}
 	p.accounts = state.Accounts
+	p.evaluations = state.Evaluations
 	if path != filepath.Join(dir, claudeQuotaPredictionFile) {
 		if errMigrate := p.saveLocked(); errMigrate != nil {
 			p.blocked = true
@@ -82,8 +85,23 @@ func (p *claudeQuotaPredictor) setPersistenceDir(dir string) error {
 }
 
 func validClaudeQuotaState(state claudeQuotaPersistedState) bool {
-	if state.Version != 1 || state.Accounts == nil || len(state.Accounts) > claudeQuotaMaxAccounts {
+	if state.Version != 1 || state.Accounts == nil || len(state.Accounts) > claudeQuotaMaxAccounts || len(state.Evaluations) > claudeQuotaEvaluationLimit {
 		return false
+	}
+	finiteNonnegative := func(value float64) bool {
+		return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+	}
+	for _, evaluation := range state.Evaluations {
+		key, err := hex.DecodeString(evaluation.AccountKey)
+		if err != nil || len(key) != 32 || (evaluation.Window != "5h" && evaluation.Window != "7d") || len(evaluation.Model) > 128 ||
+			evaluation.ObservedAt.IsZero() || !evaluation.Reset.After(evaluation.ObservedAt) ||
+			!finiteNonnegative(evaluation.BeforeUtilization) || !finiteNonnegative(evaluation.PredictedUtilization) ||
+			!finiteNonnegative(evaluation.ActualUtilization) || evaluation.ActualUtilization <= evaluation.BeforeUtilization ||
+			!finiteNonnegative(evaluation.PredictedWork) || evaluation.PredictedWork == 0 ||
+			!finiteNonnegative(evaluation.ActualWork) || evaluation.ActualWork == 0 ||
+			evaluation.CalibrationSamples < 3 || evaluation.CalibrationSamples > claudeQuotaCalibrationSamples {
+			return false
+		}
 	}
 	validSamples := func(samples []float64, limit int) bool {
 		if len(samples) > limit {
@@ -119,7 +137,7 @@ func (p *claudeQuotaPredictor) saveLocked() error {
 	if p.dir == "" || p.blocked {
 		return nil
 	}
-	data, errMarshal := json.Marshal(claudeQuotaPersistedState{Version: 1, Accounts: p.accounts})
+	data, errMarshal := json.Marshal(claudeQuotaPersistedState{Version: 1, Accounts: p.accounts, Evaluations: p.evaluations})
 	if errMarshal != nil {
 		return errClaudeQuotaPredictionState
 	}

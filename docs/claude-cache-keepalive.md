@@ -143,6 +143,18 @@ The script opens SQLite
 read-only, refuses to overwrite existing predictor state and imports only
 workload samples; historical logs contain no quota-header calibration.
 
+`GET /v8/management/observability/claude-quota-prediction` returns the latest
+64 measured one-request forecasts under normal management authentication. Each
+sample saves the utilization before the request, the forecast made from earlier
+calibration, and the utilization observed in the later response header. The
+`summary` reports sample count, mean absolute error, and signed error for the
+5-hour and weekly windows in percentage points; a positive signed error means
+the forecast was too high. Samples are saved in `.claude-cache-quota.json` and
+survive a restart. Only ordinary, serial requests with a usable token count,
+unchanged reset window, and at least three earlier calibration samples are
+measured. Keepalive replays and ambiguous observations are excluded. Existing
+historical quota readings cannot be scored retroactively.
+
 ## Manage individual sessions
 
 Open **Logs → Claude keepalive** to see current sessions above the event history.

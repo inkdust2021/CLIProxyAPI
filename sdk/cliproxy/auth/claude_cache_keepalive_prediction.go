@@ -20,6 +20,7 @@ const (
 	claudeQuotaMaxModels          = 8
 	claudeQuotaProfileSamples     = 32
 	claudeQuotaCalibrationSamples = 8
+	claudeQuotaEvaluationLimit    = 64
 )
 
 type claudeQuotaReleaseContextKey struct{}
@@ -47,11 +48,27 @@ type claudeQuotaAccount struct {
 	active      int
 }
 
+// ClaudeQuotaPredictionEvaluation compares a prior one-request forecast with a later trusted quota header.
+type ClaudeQuotaPredictionEvaluation struct {
+	AccountKey           string    `json:"account_key"`
+	Window               string    `json:"window"`
+	Model                string    `json:"model"`
+	ObservedAt           time.Time `json:"observed_at"`
+	Reset                time.Time `json:"reset"`
+	BeforeUtilization    float64   `json:"before_utilization"`
+	PredictedUtilization float64   `json:"predicted_utilization"`
+	ActualUtilization    float64   `json:"actual_utilization"`
+	PredictedWork        float64   `json:"predicted_work"`
+	ActualWork           float64   `json:"actual_work"`
+	CalibrationSamples   int       `json:"calibration_samples"`
+}
+
 type claudeQuotaPredictor struct {
-	mu       sync.Mutex
-	accounts map[string]*claudeQuotaAccount
-	dir      string
-	blocked  bool
+	mu          sync.Mutex
+	accounts    map[string]*claudeQuotaAccount
+	evaluations []ClaudeQuotaPredictionEvaluation
+	dir         string
+	blocked     bool
 }
 
 func newClaudeQuotaPredictor() *claudeQuotaPredictor {
@@ -204,12 +221,14 @@ func (p *claudeQuotaPredictor) observe(auth *Auth, record usage.Record) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	account := p.accountLocked(claudeQuotaAccountKey(auth))
+	accountKey := claudeQuotaAccountKey(auth)
+	account := p.accountLocked(accountKey)
 	if account == nil || at.Before(account.CompletedAt) {
 		return
 	}
 	replay := record.Source == "claude-cache-keepalive"
 	serial := !replay && !record.RequestedAt.Before(account.CompletedAt) && account.active <= 1 && !record.Failed
+	predictedWork := p.nextWorkLocked(account, model)
 	if workOK && !record.Failed && usage.GenerateEnabled(record.Generate) && !replay {
 		p.seedLocked(account, model, work, at)
 	}
@@ -231,6 +250,20 @@ func (p *claudeQuotaPredictor) observe(auth *Auth, record usage.Record) {
 			account.Windows[name] = window
 		}
 		delta := utilization - window.Utilization
+		if serial && window.paired && workOK && usage.GenerateEnabled(record.Generate) && delta > 0 && predictedWork > 0 && len(window.Ratios) >= 3 {
+			forecast := window.Utilization + claudeQuotaUpperSample(window.Ratios)*(window.PendingWork+predictedWork)
+			if !math.IsNaN(forecast) && !math.IsInf(forecast, 0) {
+				p.evaluations = append(p.evaluations, ClaudeQuotaPredictionEvaluation{
+					AccountKey: accountKey, Window: name, Model: canonicalClaudeQuotaModel(model),
+					ObservedAt: at, Reset: reset, BeforeUtilization: window.Utilization,
+					PredictedUtilization: forecast, ActualUtilization: utilization,
+					PredictedWork: predictedWork, ActualWork: work, CalibrationSamples: len(window.Ratios),
+				})
+				if len(p.evaluations) > claudeQuotaEvaluationLimit {
+					p.evaluations = append([]ClaudeQuotaPredictionEvaluation(nil), p.evaluations[len(p.evaluations)-claudeQuotaEvaluationLimit:]...)
+				}
+			}
+		}
 		if serial && window.paired && workOK && delta > 0 {
 			ratio := delta / (window.PendingWork + work)
 			if !math.IsNaN(ratio) && !math.IsInf(ratio, 0) {
@@ -381,6 +414,16 @@ func (m *Manager) beginClaudeQuotaAttempt(auth *Auth, model string) (func(), boo
 // SetClaudeQuotaPredictionPersistence configures compact state beside persisted auths.
 func (m *Manager) SetClaudeQuotaPredictionPersistence(dir string) error {
 	return m.claudeQuotaPrediction.setPersistenceDir(dir)
+}
+
+// ClaudeQuotaPredictionEvaluations returns recent forecasts and later quota observations.
+func (m *Manager) ClaudeQuotaPredictionEvaluations() []ClaudeQuotaPredictionEvaluation {
+	p := m.claudeQuotaPrediction
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]ClaudeQuotaPredictionEvaluation, len(p.evaluations))
+	copy(out, p.evaluations)
+	return out
 }
 
 func (p *claudeQuotaPredictor) persistLocked() {
