@@ -3,49 +3,76 @@ package management
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"golang.org/x/crypto/bcrypt"
 )
 
-func TestAuthenticateManagementKey_LocalhostIPBan_BlocksCorrectKeyDuringBan(t *testing.T) {
-	h := &Handler{
-		cfg:            &config.Config{},
-		failedAttempts: make(map[string]*attemptInfo),
-		envSecret:      "test-secret",
+func TestAuthenticateManagementKey_FailedAttemptsDoNotBanClient(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for i := 0; i < 5; i++ {
-		allowed, statusCode, errMsg := h.AuthenticateManagementKey("127.0.0.1", true, "wrong-secret")
-		if allowed {
-			t.Fatalf("expected auth to be denied at attempt %d", i+1)
+	for _, mode := range []string{"environment", "configured", "local password"} {
+		for _, localClient := range []bool{true, false} {
+			if mode == "local password" && !localClient {
+				continue
+			}
+			for _, provided := range []string{"", "wrong-secret"} {
+				h := NewHandler(&config.Config{}, "", nil)
+				h.envSecret = ""
+				h.allowRemoteOverride = false
+				h.cfg.RemoteManagement.AllowRemote = true
+				h.cfg.RemoteManagement.SecretKey = string(hash)
+				validKey := "test-secret"
+				if mode == "environment" {
+					h.envSecret = validKey
+					h.cfg.RemoteManagement.SecretKey = ""
+				}
+				if mode == "local password" {
+					validKey = "test-local-secret"
+					h.localPassword = validKey
+				}
+				wantMessage := "invalid management key"
+				if provided == "" {
+					wantMessage = "missing management key"
+				}
+				for i := 0; i < 10; i++ {
+					allowed, statusCode, errMsg := h.AuthenticateManagementKey("172.20.0.1", localClient, provided)
+					if allowed || statusCode != http.StatusUnauthorized || errMsg != wantMessage {
+						t.Fatalf("local=%v attempt=%d: allowed=%v status=%d msg=%q", localClient, i+1, allowed, statusCode, errMsg)
+					}
+				}
+				allowed, statusCode, errMsg := h.AuthenticateManagementKey("172.20.0.1", localClient, validKey)
+				if !allowed || statusCode != 0 || errMsg != "" {
+					t.Fatalf("correct key after failures: allowed=%v status=%d msg=%q", allowed, statusCode, errMsg)
+				}
+			}
 		}
-		if statusCode != http.StatusUnauthorized || errMsg != "invalid management key" {
-			t.Fatalf("unexpected auth failure at attempt %d: status=%d msg=%q", i+1, statusCode, errMsg)
-		}
 	}
+}
 
-	allowed, statusCode, errMsg := h.AuthenticateManagementKey("127.0.0.1", true, "test-secret")
-	if allowed {
-		t.Fatalf("expected correct key to be denied while banned")
+func TestAuthenticateManagementKey_AccessRestrictions(t *testing.T) {
+	h := &Handler{cfg: &config.Config{}}
+	allowed, statusCode, errMsg := h.AuthenticateManagementKey("172.20.0.1", false, "test-secret")
+	if allowed || statusCode != http.StatusForbidden || errMsg != "remote management disabled" {
+		t.Fatalf("remote access without enablement: allowed=%v status=%d msg=%q", allowed, statusCode, errMsg)
 	}
-	if statusCode != http.StatusForbidden {
-		t.Fatalf("expected forbidden status while banned, got %d", statusCode)
-	}
-	if !strings.HasPrefix(errMsg, "IP banned due to too many failed attempts. Try again in") {
-		t.Fatalf("unexpected banned message: %q", errMsg)
+	h.cfg.RemoteManagement.AllowRemote = true
+	allowed, statusCode, errMsg = h.AuthenticateManagementKey("172.20.0.1", false, "test-secret")
+	if allowed || statusCode != http.StatusForbidden || errMsg != "remote management key not set" {
+		t.Fatalf("access without configured key: allowed=%v status=%d msg=%q", allowed, statusCode, errMsg)
 	}
 }
 
 func TestMiddlewareSetsSupportPluginHeader(t *testing.T) {
 
 	h := &Handler{
-		cfg:            &config.Config{},
-		failedAttempts: make(map[string]*attemptInfo),
-		envSecret:      "test-secret",
+		cfg:       &config.Config{},
+		envSecret: "test-secret",
 	}
 	middleware := h.Middleware()
 
